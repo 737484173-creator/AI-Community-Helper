@@ -6,6 +6,7 @@ import io
 import json
 import subprocess
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.ae_cli import resolve_ae_cli
 from app.database.migrations.init_db import init_database
 from app.database.repositories.vip_ae_repository import AEVIPSnapshotRepository
 from app.vip.server_merges import canonical_server_id
+from app.vip.item_catalog import ItemCatalog, classify_consumption_category, load_item_catalog
 from app.vip.utils.excel_reader import _infer_server_type
 from config.settings import BASE_DIR
 
@@ -36,6 +38,18 @@ _PAYMENT_METRIC = {
     "relation": "and",
 }
 
+PROFILE_POWER_FIELDS = (
+    "build_fp",
+    "tech_fp",
+    "soldier_fp",
+    "beast_fp",
+    "hero_fp",
+    "hiryu_fp",
+    "com_fp",
+    "leg_tech_fp",
+    "cur_fp",
+)
+
 CUMULATIVE_PROFILE_DEFINITION = {
     "time_range": {"mode": "start_to_yesterday", "start_time": "2023-01-01"},
     "time_particle_size": "total",
@@ -47,6 +61,10 @@ CUMULATIVE_PROFILE_DEFINITION = {
         {"field": {"name": "cur_server_name", "type": "user_property"}},
         {"field": {"name": "last_login_time", "type": "user_property"}},
         {"field": {"name": "#vp@cps_group", "type": "user_property"}},
+        *[
+            {"field": {"name": field, "type": "user_property"}}
+            for field in PROFILE_POWER_FIELDS
+        ],
     ],
     "relation": "and",
 }
@@ -75,6 +93,45 @@ ROLLING_28_DAY_PAYMENT_DEFINITION = {
 }
 
 
+def _purchase_definition(time_range: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "time_range": time_range,
+        "time_particle_size": "total",
+        "metrics": [
+            {
+                "event": "role_pay",
+                "aggregation": "total_count",
+                "filters": _PAYMENT_METRIC["filters"],
+                "relation": "and",
+            },
+            _PAYMENT_METRIC,
+            {
+                "event": "role_pay",
+                "aggregation": "sum",
+                "property": "giftbox_detail.amount",
+                "filters": _PAYMENT_METRIC["filters"],
+                "relation": "and",
+            },
+        ],
+        "groups": [
+            {"field": {"name": "#account_id", "type": "user_property"}},
+            {"field": {"name": "giftbox_id", "type": "event_property"}},
+            {"field": {"name": "giftbox_name", "type": "event_property"}},
+            {"field": {"name": "giftbox_detail.id", "type": "event_property"}},
+            {"field": {"name": "giftbox_detail.name", "type": "event_property"}},
+        ],
+        "relation": "and",
+    }
+
+
+PURCHASE_LIFETIME_DEFINITION = _purchase_definition(
+    {"mode": "start_to_yesterday", "start_time": "2023-01-01"}
+)
+PURCHASE_RECENT_DEFINITION = _purchase_definition(
+    {"mode": "previous", "unit": "day", "value": 30}
+)
+
+
 class AEVIPSyncError(RuntimeError):
     pass
 
@@ -88,6 +145,9 @@ class AEVIPSyncResult:
     weekly_window: str
     previous_week_window: str
     rolling_28d_window: str
+    purchase_package_count: int
+    purchase_lifetime_window: str
+    purchase_recent_window: str
     synced_at: str
     sync_run_id: int
 
@@ -126,15 +186,27 @@ class AEVIPSyncService:
                 weekly_path = temp_path / "weekly-payment.csv.gz"
                 fortnight_path = temp_path / "fortnight-payment.csv.gz"
                 rolling_28d_path = temp_path / "rolling-28d-payment.csv.gz"
+                purchase_lifetime_path = temp_path / "purchase-lifetime.csv.gz"
+                purchase_recent_path = temp_path / "purchase-recent.csv.gz"
                 self._export(cli_path, CUMULATIVE_PROFILE_DEFINITION, cumulative_path)
                 self._export(cli_path, WEEKLY_PAYMENT_DEFINITION, weekly_path)
                 self._export(cli_path, FOURTEEN_DAY_PAYMENT_DEFINITION, fortnight_path)
                 self._export(cli_path, ROLLING_28_DAY_PAYMENT_DEFINITION, rolling_28d_path)
+                self._export(cli_path, PURCHASE_LIFETIME_DEFINITION, purchase_lifetime_path)
+                self._export(cli_path, PURCHASE_RECENT_DEFINITION, purchase_recent_path)
 
-                cumulative_rows = read_ae_csv_artifact(cumulative_path, minimum_columns=8)
+                cumulative_rows = read_ae_csv_artifact(cumulative_path, minimum_columns=17)
                 weekly_rows = read_ae_csv_artifact(weekly_path, minimum_columns=3)
                 fortnight_rows = read_ae_csv_artifact(fortnight_path, minimum_columns=3)
                 rolling_28d_rows = read_ae_csv_artifact(rolling_28d_path, minimum_columns=3)
+                purchase_lifetime_rows = read_ae_csv_artifact(
+                    purchase_lifetime_path,
+                    minimum_columns=9,
+                )
+                purchase_recent_rows = read_ae_csv_artifact(
+                    purchase_recent_path,
+                    minimum_columns=9,
+                )
                 (
                     snapshot_rows,
                     cumulative_window,
@@ -148,6 +220,21 @@ class AEVIPSyncService:
                     rolling_28d_rows,
                     minimum_payment_usd=self.minimum_payment_usd,
                 )
+                role_ids = {str(row["role_id"]) for row in snapshot_rows}
+                item_catalog = load_item_catalog()
+                lifetime_packages, purchase_lifetime_window = build_purchase_package_rows(
+                    purchase_lifetime_rows,
+                    window_key="lifetime",
+                    allowed_role_ids=role_ids,
+                    item_catalog=item_catalog,
+                )
+                recent_packages, purchase_recent_window = build_purchase_package_rows(
+                    purchase_recent_rows,
+                    window_key="recent_30d",
+                    allowed_role_ids=role_ids,
+                    item_catalog=item_catalog,
+                )
+                purchase_packages = [*lifetime_packages, *recent_packages]
 
             if not cumulative_rows:
                 raise AEVIPSyncError("AE 累计充值导出为空，已保留上一版快照。")
@@ -161,6 +248,7 @@ class AEVIPSyncService:
             sync_run_id = self.repository.replace_snapshot(
                 self.project_id,
                 snapshot_rows,
+                purchase_rows=purchase_packages,
                 started_at=started_at,
                 finished_at=finished_at,
                 source_row_count=len(cumulative_rows),
@@ -168,6 +256,11 @@ class AEVIPSyncService:
                 weekly_window=weekly_window,
                 previous_week_window=previous_week_window,
                 rolling_28d_window=rolling_28d_window,
+                purchase_source_row_count=(
+                    len(purchase_lifetime_rows) + len(purchase_recent_rows)
+                ),
+                purchase_lifetime_window=purchase_lifetime_window,
+                purchase_recent_window=purchase_recent_window,
             )
             return AEVIPSyncResult(
                 project_id=self.project_id,
@@ -177,6 +270,9 @@ class AEVIPSyncService:
                 weekly_window=weekly_window,
                 previous_week_window=previous_week_window,
                 rolling_28d_window=rolling_28d_window,
+                purchase_package_count=len(purchase_packages),
+                purchase_lifetime_window=purchase_lifetime_window,
+                purchase_recent_window=purchase_recent_window,
                 synced_at=finished_at,
                 sync_run_id=sync_run_id,
             )
@@ -305,7 +401,9 @@ def build_snapshot_rows(
         role_id = _clean_identifier(row[1])
         if not role_id:
             continue
-        total_payment = _coerce_float(row[7])
+        has_power_fields = len(row) >= 17
+        total_payment_index = 16 if has_power_fields else 7
+        total_payment = _coerce_float(row[total_payment_index])
         candidate = {
             "role_id": role_id,
             "role_name": _clean_text(row[2]),
@@ -314,6 +412,12 @@ def build_snapshot_rows(
             "last_login_time": _clean_text(row[5]),
             "cps_group": _clean_text(row[6]),
             "total_payment_amount": total_payment,
+            **{
+                field: _coerce_optional_float(row[7 + offset])
+                if has_power_fields
+                else None
+                for offset, field in enumerate(PROFILE_POWER_FIELDS)
+            },
         }
         existing = profiles.get(role_id)
         if existing is None:
@@ -369,6 +473,111 @@ def build_snapshot_rows(
     )
 
 
+def build_purchase_package_rows(
+    rows: Sequence[Sequence[str]],
+    *,
+    window_key: str,
+    allowed_role_ids: set[str] | None = None,
+    item_catalog: ItemCatalog | None = None,
+) -> tuple[list[dict[str, object]], str]:
+    catalog = item_catalog or ItemCatalog({}, {}, None)
+    packages: dict[tuple[str, str], dict[str, Any]] = {}
+    window_label = ""
+    for row in rows:
+        if len(row) < 9:
+            continue
+        window_label = window_label or _clean_text(row[0])
+        role_id = _clean_identifier(row[1])
+        if not role_id or (allowed_role_ids is not None and role_id not in allowed_role_ids):
+            continue
+        giftbox_id = _clean_identifier(row[2])
+        giftbox_name = _clean_text(row[3]) or catalog.gifts.get(giftbox_id, "")
+        item_id = _clean_identifier(row[4])
+        item_name = _clean_text(row[5]) or catalog.items.get(item_id, "")
+        if not giftbox_id and not giftbox_name:
+            # Without a package identity the payment metric repeats for every
+            # nested item row, so it cannot be de-duplicated safely.
+            continue
+        stable_giftbox_id = (
+            f"{giftbox_id}::{giftbox_name}"
+            if giftbox_id and giftbox_name
+            else giftbox_id or f"name:{giftbox_name or item_id or 'unknown'}"
+        )
+        key = (role_id, stable_giftbox_id)
+        package = packages.setdefault(
+            key,
+            {
+                "role_id": role_id,
+                "window_key": window_key,
+                "window_label": window_label,
+                "giftbox_id": stable_giftbox_id,
+                "giftbox_name": giftbox_name or "未命名礼包",
+                "purchase_count": 0,
+                "payment_amount": 0.0,
+                "items": {},
+            },
+        )
+        package["purchase_count"] = max(
+            int(package["purchase_count"]),
+            int(round(_coerce_float(row[6]))),
+        )
+        package["payment_amount"] = max(
+            float(package["payment_amount"]),
+            _coerce_float(row[7]),
+        )
+        if item_id or item_name:
+            stable_item_id = item_id or f"name:{item_name}"
+            items = package["items"]
+            existing = items.get(stable_item_id)
+            item_amount = _coerce_float(row[8])
+            if existing is None:
+                items[stable_item_id] = {
+                    "item_id": item_id,
+                    "item_name": item_name or "未命名道具",
+                    "item_amount": item_amount,
+                    "category": catalog.item_categories.get(item_id)
+                    or classify_consumption_category(item_name),
+                }
+            else:
+                existing["item_amount"] = max(float(existing["item_amount"]), item_amount)
+
+    output: list[dict[str, object]] = []
+    for package in packages.values():
+        items = sorted(
+            package.pop("items").values(),
+            key=lambda item: (-float(item["item_amount"]), str(item["item_id"])),
+        )
+        gift_category = classify_consumption_category(package["giftbox_name"])
+        item_weights: dict[str, float] = defaultdict(float)
+        for item in items:
+            item_weights[str(item["category"])] += max(float(item["item_amount"]), 1.0)
+        specific_item_weights = {
+            category: weight
+            for category, weight in item_weights.items()
+            if category not in {"其他", "通用资源"}
+        }
+        if gift_category in {"其他", "通用资源"} and specific_item_weights:
+            category = max(specific_item_weights.items(), key=lambda entry: entry[1])[0]
+        else:
+            category = gift_category
+        output.append(
+            {
+                **package,
+                "category": category,
+                "items_json": json.dumps(items[:12], ensure_ascii=False, separators=(",", ":")),
+            }
+        )
+    output.sort(
+        key=lambda item: (
+            str(item["role_id"]),
+            str(item["window_key"]),
+            -float(item["payment_amount"]),
+            str(item["giftbox_id"]),
+        )
+    )
+    return output, window_label
+
+
 def _payment_rows_by_role(
     rows: Sequence[Sequence[str]],
 ) -> tuple[dict[str, float], str]:
@@ -389,7 +598,14 @@ def _profile_rank(profile: dict[str, object]) -> tuple[str, int]:
     last_login = str(profile.get("last_login_time") or "")
     completeness = sum(
         bool(profile.get(field))
-        for field in ("role_name", "server_id", "server_name", "last_login_time", "cps_group")
+        for field in (
+            "role_name",
+            "server_id",
+            "server_name",
+            "last_login_time",
+            "cps_group",
+            *PROFILE_POWER_FIELDS,
+        )
     )
     return last_login, completeness
 
@@ -411,6 +627,16 @@ def _coerce_float(value: object) -> float:
         return float(text) if text else 0.0
     except ValueError:
         return 0.0
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    text = _clean_text(value).replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _parse_cli_json(output: str) -> dict[str, Any]:

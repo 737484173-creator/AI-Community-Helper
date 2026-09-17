@@ -20,6 +20,7 @@ data/
 
 # Logs and local coverage/build artifacts.
 logs/
+.tmp/
 *.log
 .coverage
 htmlcov/

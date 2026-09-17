@@ -12,9 +12,11 @@ from app.vip.ae_sync import (
     FOURTEEN_DAY_PAYMENT_DEFINITION,
     ROLLING_28_DAY_PAYMENT_DEFINITION,
     WEEKLY_PAYMENT_DEFINITION,
+    build_purchase_package_rows,
     build_snapshot_rows,
     read_ae_csv_artifact,
 )
+from app.vip.item_catalog import ItemCatalog
 
 
 def test_ae_definitions_use_user_account_id_and_previous_seven_days() -> None:
@@ -33,6 +35,18 @@ def test_ae_definitions_use_user_account_id_and_previous_seven_days() -> None:
     metric_filter = CUMULATIVE_PROFILE_DEFINITION["metrics"][0]["filters"][0]
     assert metric_filter["field"] == {"name": "is_sandbox", "type": "event_property"}
     assert metric_filter["values"] == ["0"]
+    profile_groups = [group["field"]["name"] for group in CUMULATIVE_PROFILE_DEFINITION["groups"]]
+    assert profile_groups[-9:] == [
+        "build_fp",
+        "tech_fp",
+        "soldier_fp",
+        "beast_fp",
+        "hero_fp",
+        "hiryu_fp",
+        "com_fp",
+        "leg_tech_fp",
+        "cur_fp",
+    ]
 
 
 def test_build_snapshot_rows_applies_vip_rules_and_deduplicates_by_role_id() -> None:
@@ -94,6 +108,63 @@ def test_build_snapshot_rows_persists_primary_server_after_merge() -> None:
     assert rows[0]["payment_28d_weekly_avg"] == 0
 
 
+def test_build_snapshot_rows_reads_power_fields_from_extended_profile_export() -> None:
+    cumulative_rows = [
+        [
+            "2023-01-01To2026-09-16",
+            "200",
+            "PowerPlayer",
+            "S23",
+            "S23",
+            "2026-09-16",
+            "",
+            "100",
+            "200",
+            "300",
+            "400",
+            "500",
+            "600",
+            "700",
+            "800",
+            "3600",
+            "2500",
+        ]
+    ]
+
+    rows, *_ = build_snapshot_rows(cumulative_rows, [])
+
+    assert rows[0]["build_fp"] == 100
+    assert rows[0]["leg_tech_fp"] == 800
+    assert rows[0]["cur_fp"] == 3600
+    assert rows[0]["total_payment_amount"] == 2500
+
+
+def test_purchase_packages_do_not_repeat_package_spend_for_each_item() -> None:
+    source_rows = [
+        ["window", "100", "gift-1", "", "item-1", "", "3", "29.97", "30"],
+        ["window", "100", "gift-1", "", "item-2", "建筑加速", "3", "29.97", "60"],
+    ]
+    catalog = ItemCatalog(
+        {"item-1": "高级建筑图纸", "item-2": "建筑加速"},
+        {"gift-1": "城建补给"},
+        "catalog.xlsx",
+    )
+
+    rows, window = build_purchase_package_rows(
+        source_rows,
+        window_key="lifetime",
+        allowed_role_ids={"100"},
+        item_catalog=catalog,
+    )
+
+    assert window == "window"
+    assert len(rows) == 1
+    assert rows[0]["payment_amount"] == 29.97
+    assert rows[0]["purchase_count"] == 3
+    assert rows[0]["category"] == "建筑发展"
+    assert "高级建筑图纸" in rows[0]["items_json"]
+
+
 def test_missing_payment_aggregate_rows_are_materialized_as_zero() -> None:
     cumulative_rows = [
         ["2023-01-01To2026-09-08", "300", "Dormant", "S1", "S1", "2026-08-10", "", "9000"]
@@ -142,17 +213,36 @@ def test_ae_snapshot_repository_replaces_one_project_atomically(tmp_path: Path) 
         "cps_group": "",
         "server_type": "老服",
         "user_source": "自然量",
+        "build_fp": 100.0,
+        "tech_fp": 200.0,
+        "cur_fp": 300.0,
     }
 
     repository.replace_snapshot(
         24,
         [base_row, {**base_row, "role_id": "101"}],
+        purchase_rows=[
+            {
+                "role_id": "100",
+                "window_key": "lifetime",
+                "window_label": "all",
+                "giftbox_id": "gift-1",
+                "giftbox_name": "城建补给",
+                "category": "建筑发展",
+                "purchase_count": 2,
+                "payment_amount": 19.98,
+                "items_json": "[]",
+            }
+        ],
         started_at="2026-09-08T00:00:00+00:00",
         finished_at="2026-09-08T00:01:00+00:00",
         source_row_count=10,
         cumulative_window="all",
         weekly_window="7d",
     )
+    saved_packages = repository.list_purchase_packages(24, "100")
+    assert len(saved_packages) == 1
+    assert saved_packages[0]["payment_amount"] == 19.98
     repository.replace_snapshot(
         24,
         [{**base_row, "total_payment_amount": 2000.0}],
@@ -170,4 +260,6 @@ def test_ae_snapshot_repository_replaces_one_project_atomically(tmp_path: Path) 
     assert rows[0]["total_payment_amount"] == 2000.0
     assert rows[0]["payment_previous_7d_amount"] == 70.0
     assert rows[0]["payment_28d_weekly_avg"] == 75.0
+    assert rows[0]["build_fp"] == 100.0
+    assert repository.list_purchase_packages(24, "100") == []
     assert latest["vip_row_count"] == 1

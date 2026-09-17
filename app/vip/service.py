@@ -9,6 +9,7 @@ import pandas as pd
 
 from app.database.repositories.vip_ae_repository import AEVIPSnapshotRepository
 from app.vip.ae_sync import DEFAULT_AE_PROJECT_ID
+from app.vip.profile import POWER_FIELDS
 from app.vip.scoring.router import score_dataframe
 from app.vip.server_merges import apply_server_merges
 from app.vip.utils.excel_reader import ExcelReadReport, REQUIRED_FIELDS, _infer_server_type, read_vip_excel
@@ -60,6 +61,7 @@ def load_ae_vip_workbook(
                 "过去28日周均充值": row["payment_28d_weekly_avg"],
                 "服务器类型": _infer_server_type(row["server_id"] or row["server_name"] or "") or row["server_type"],
                 "用户来源": row["user_source"],
+                **{field: row[field] for field in POWER_FIELDS},
             }
             for row in rows
         ]

@@ -162,6 +162,21 @@ def _apply_lightweight_migrations(connection) -> None:
         connection.execute(
             "ALTER TABLE vip_ae_snapshots ADD COLUMN payment_28d_weekly_avg REAL"
         )
+    for column_name in (
+        "build_fp",
+        "tech_fp",
+        "soldier_fp",
+        "beast_fp",
+        "hero_fp",
+        "hiryu_fp",
+        "com_fp",
+        "leg_tech_fp",
+        "cur_fp",
+    ):
+        if column_name not in vip_snapshot_columns:
+            connection.execute(
+                f"ALTER TABLE vip_ae_snapshots ADD COLUMN {column_name} REAL"
+            )
 
     vip_sync_run_columns = {
         row["name"]
@@ -174,6 +189,24 @@ def _apply_lightweight_migrations(connection) -> None:
     if "rolling_28d_window" not in vip_sync_run_columns:
         connection.execute(
             "ALTER TABLE vip_ae_sync_runs ADD COLUMN rolling_28d_window TEXT"
+        )
+    if "purchase_source_row_count" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs "
+            "ADD COLUMN purchase_source_row_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "purchase_vip_package_count" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs "
+            "ADD COLUMN purchase_vip_package_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "purchase_lifetime_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_lifetime_window TEXT"
+        )
+    if "purchase_recent_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_recent_window TEXT"
         )
 
 

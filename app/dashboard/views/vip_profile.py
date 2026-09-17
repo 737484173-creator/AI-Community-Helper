@@ -13,6 +13,7 @@ from app.vip.profile import (
     ProfileInsight,
     build_profile_insight,
     cultivation_progress,
+    giftbox_display_name,
     payment_direction,
     player_option_label,
     recommendation_state,
@@ -202,9 +203,19 @@ def _render_purchase_panel(st, purchase_rows: pd.DataFrame) -> None:
     for _, item in ranked.iterrows():
         amount = float(item["payment_amount"])
         width = 100 * amount / maximum
+        giftbox_name, name_missing = giftbox_display_name(
+            item.get("giftbox_name"),
+            item.get("giftbox_id"),
+        )
+        missing_badge = (
+            '<em class="vip-purchase-missing">名称待补充</em>'
+            if name_missing
+            else ""
+        )
         rows.append(
             '<div class="vip-purchase-row"><div>'
-            f'<strong>{escape(_safe_text(item.get("giftbox_name"), "未命名礼包"))}</strong>'
+            '<div class="vip-purchase-title">'
+            f'<strong>{escape(giftbox_name)}</strong>{missing_badge}</div>'
             f'<span>{escape(_safe_text(item.get("category"), "其他"))} · {int(item["purchase_count"]):,} 次</span>'
             f'<div class="vip-purchase-track"><i style="width:{width:.1f}%"></i></div></div>'
             f'<b>{amount:,.2f}</b></div>'

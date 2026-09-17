@@ -209,6 +209,23 @@
 .vip-purchase-row:last-child, .vip-gap-row:last-child { border-bottom: 0; }
 .vip-purchase-row:hover, .vip-gap-row:hover { padding-left: 21px; background: color-mix(in srgb, var(--primary-soft) 42%, transparent); }
 .vip-purchase-row strong, .vip-gap-row strong { display: block; color: var(--text-primary); font-size: 13px; }
+.vip-purchase-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+.vip-purchase-missing {
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--warning-soft) 68%, var(--surface));
+    color: var(--warning);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 650;
+    line-height: 1.2;
+}
 .vip-purchase-row span, .vip-gap-row span { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: 11px; }
 .vip-purchase-row b, .vip-gap-row b { color: var(--text-primary); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vip-gap-track i { background: var(--warning); }

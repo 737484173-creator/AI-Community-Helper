@@ -16,7 +16,7 @@ from app.vip.ae_sync import (
     build_snapshot_rows,
     read_ae_csv_artifact,
 )
-from app.vip.item_catalog import ItemCatalog
+from app.vip.item_catalog import ItemCatalog, load_giftbox_name_overrides
 
 
 def test_ae_definitions_use_user_account_id_and_previous_seven_days() -> None:
@@ -163,6 +163,16 @@ def test_purchase_packages_do_not_repeat_package_spend_for_each_item() -> None:
     assert rows[0]["purchase_count"] == 3
     assert rows[0]["category"] == "建筑发展"
     assert "高级建筑图纸" in rows[0]["items_json"]
+
+
+def test_giftbox_name_overrides_accept_future_manual_mapping(tmp_path: Path) -> None:
+    mapping_path = tmp_path / "giftbox_names.json"
+    mapping_path.write_text(
+        '{"updated_at":"2026-09-17","giftboxes":{"931707":"示例礼包"}}',
+        encoding="utf-8",
+    )
+
+    assert load_giftbox_name_overrides(mapping_path) == {"931707": "示例礼包"}
 
 
 def test_missing_payment_aggregate_rows_are_materialized_as_zero() -> None:

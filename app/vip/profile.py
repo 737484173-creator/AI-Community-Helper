@@ -413,7 +413,10 @@ def _category_examples(rows: pd.DataFrame) -> tuple[tuple[str, ...], tuple[str, 
     packages: list[str] = []
     items: list[str] = []
     for _, row in ranked.iterrows():
-        giftbox_name = str(row.get("giftbox_name") or "").strip()
+        giftbox_name, _ = giftbox_display_name(
+            row.get("giftbox_name"),
+            row.get("giftbox_id"),
+        )
         if giftbox_name and giftbox_name not in packages:
             packages.append(giftbox_name)
         try:
@@ -430,6 +433,21 @@ def _category_examples(rows: pd.DataFrame) -> tuple[tuple[str, ...], tuple[str, 
         if len(packages) >= 3 and len(items) >= 4:
             break
     return tuple(packages[:3]), tuple(items[:4])
+
+
+def giftbox_display_name(
+    giftbox_name: object,
+    giftbox_id: object,
+) -> tuple[str, bool]:
+    name = str(giftbox_name or "").strip()
+    missing = not name or name == "未命名礼包" or name.endswith("（名称待补充）")
+    if not missing:
+        return name, False
+
+    identifier = str(giftbox_id or "").strip().split("::", 1)[0]
+    if identifier and not identifier.startswith("name:"):
+        return f"礼包 ID {identifier}", True
+    return "礼包名称待补充", True
 
 
 def _category_stage_score(

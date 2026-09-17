@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -11,6 +12,7 @@ from config.settings import BASE_DIR
 
 
 DEFAULT_ITEM_CATALOG_PATH = BASE_DIR / "data" / "vip" / "D-道具表.xlsx"
+GIFTBOX_NAME_OVERRIDES_PATH = Path(__file__).parent / "config" / "giftbox_names.json"
 
 
 @dataclass(frozen=True)
@@ -28,8 +30,9 @@ class ItemCatalog:
 @lru_cache(maxsize=4)
 def load_item_catalog(path: str | Path | None = None) -> ItemCatalog:
     source = _catalog_path(path)
+    giftbox_overrides = load_giftbox_name_overrides()
     if source is None:
-        return ItemCatalog({}, {}, None)
+        return ItemCatalog({}, giftbox_overrides, None)
     try:
         item_frame = pd.read_excel(
             source,
@@ -42,7 +45,7 @@ def load_item_catalog(path: str | Path | None = None) -> ItemCatalog:
             usecols=["道具ID", "名称", "名称后缀"],
         )
     except (OSError, ValueError):
-        return ItemCatalog({}, {}, str(source))
+        return ItemCatalog({}, giftbox_overrides, str(source))
 
     items: dict[str, str] = {}
     item_categories: dict[str, str] = {}
@@ -64,7 +67,27 @@ def load_item_catalog(path: str | Path | None = None) -> ItemCatalog:
         suffix = _text(row.get("名称后缀"))
         if gift_id and base_name:
             gifts[gift_id] = " ".join(part for part in (base_name, suffix) if part)
+    gifts.update(giftbox_overrides)
     return ItemCatalog(items, gifts, str(source), item_categories)
+
+
+@lru_cache(maxsize=4)
+def load_giftbox_name_overrides(
+    path: str | Path = GIFTBOX_NAME_OVERRIDES_PATH,
+) -> dict[str, str]:
+    source = Path(path)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    giftboxes = payload.get("giftboxes", {}) if isinstance(payload, dict) else {}
+    if not isinstance(giftboxes, dict):
+        return {}
+    return {
+        _identifier(giftbox_id): _text(name)
+        for giftbox_id, name in giftboxes.items()
+        if _identifier(giftbox_id) and _text(name)
+    }
 
 
 def classify_consumption_category(*labels: object) -> str:

@@ -5,6 +5,7 @@ import pandas as pd
 from app.vip.profile import (
     build_profile_insight,
     cultivation_progress,
+    giftbox_display_name,
     payment_direction,
     profile_coverage,
     recommendation_state,
@@ -71,6 +72,20 @@ def test_payment_direction_uses_current_and_previous_seven_day_windows() -> None
 
     assert label == "付费升温"
     assert "50%" in note
+
+
+def test_missing_giftbox_name_uses_traceable_identifier() -> None:
+    display_name, missing = giftbox_display_name("未命名礼包", "931707")
+
+    assert display_name == "礼包 ID 931707"
+    assert missing is True
+
+
+def test_known_giftbox_name_is_preserved() -> None:
+    display_name, missing = giftbox_display_name("城建补给", "gift-1::城建补给")
+
+    assert display_name == "城建补给"
+    assert missing is False
 
 
 def test_profile_insight_combines_purchase_preference_and_power_gap() -> None:

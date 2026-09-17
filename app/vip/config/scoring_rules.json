@@ -1,0 +1,328 @@
+{
+  "as_of_date": "2026-07-05",
+  "priority_thresholds": [
+    { "min": 70, "label": "立即触达" },
+    { "min": 55, "label": "优先触达" },
+    { "min": 35, "label": "观察跟进" },
+    { "min": 0, "label": "暂不触达" }
+  ],
+  "contact_priority_thresholds": [
+    { "min": 70, "label": "立即触达" },
+    { "min": 55, "label": "优先触达" },
+    { "min": 35, "label": "观察跟进" },
+    { "min": 0, "label": "暂不触达" }
+  ],
+  "payment_risk": {
+    "observe_decline_ratio": 0.25,
+    "high_decline_ratio": 0.5,
+    "observe_decline_score": 10,
+    "high_decline_score": 20,
+    "zero_7d_score": 20,
+    "zero_14d_score": 35
+  },
+  "red_black": {
+    "minimum_group_size": 20,
+    "trim_ratio": 0.1,
+    "red_group_multiplier": 1.5,
+    "red_personal_growth_ratio": 0.3,
+    "red_group_percentile": 0.8,
+    "red_minimum_payment": {
+      "老服": 100,
+      "新服": 300
+    },
+    "high_value_percentile": 0.8,
+    "high_value_minimum": {
+      "老服": 5000,
+      "新服": 1000
+    },
+    "black_personal_decline_ratio": 0.3,
+    "black_zero_payment_signal_score": 25,
+    "login_risk_start_days": 7,
+    "login_high_risk_days": 14,
+    "login_observe_score": 15,
+    "login_high_risk_score": 30,
+    "payment_zero_7d_score": 25,
+    "payment_zero_14d_score": 50,
+    "risk_high_threshold": 70,
+    "risk_medium_threshold": 45,
+    "top_n": 15
+  },
+  "old_server_organic": {
+    "cumulative_value_ranges": [
+      { "min": 20000, "score": 40 },
+      { "min": 5000, "score": 35 },
+      { "min": 1000, "score": 25 },
+      { "min": 100, "score": 15 },
+      { "min": 0, "score": 5 }
+    ],
+    "weekly_recharge_risk_ranges": [
+      { "min": 500, "score": 0 },
+      { "min": 100, "score": 5 },
+      { "min": 50, "score": 10 },
+      { "min": 0.01, "score": 20 },
+      { "min": 0, "score": 30 }
+    ],
+    "login_risk_ranges": [
+      { "min": 14, "score": 40 },
+      { "min": 7, "score": 15 },
+      { "min": 0, "score": 0 }
+    ]
+  },
+  "old_server_cps": {
+    "cumulative_value_ranges": [
+      { "min": 20000, "score": 40 },
+      { "min": 5000, "score": 35 },
+      { "min": 1000, "score": 25 },
+      { "min": 100, "score": 15 },
+      { "min": 0, "score": 5 }
+    ],
+    "weekly_recharge_risk_ranges": [
+      { "min": 500, "score": 0 },
+      { "min": 100, "score": 5 },
+      { "min": 50, "score": 10 },
+      { "min": 0.01, "score": 20 },
+      { "min": 0, "score": 30 }
+    ],
+    "login_risk_ranges": [
+      { "min": 14, "score": 40 },
+      { "min": 7, "score": 15 },
+      { "min": 0, "score": 0 }
+    ]
+  },
+  "new_server_organic": {
+    "cumulative_value_ranges": [
+      { "min": 1000, "score": 30 },
+      { "min": 500, "score": 20 },
+      { "min": 300, "score": 15 },
+      { "min": 100, "score": 10 },
+      { "min": 0, "score": 5 }
+    ],
+    "weekly_value_ranges": [
+      { "min": 1000, "score": 35 },
+      { "min": 500, "score": 25 },
+      { "min": 100, "score": 15 },
+      { "min": 50, "score": 5 },
+      { "min": 0, "score": 0 }
+    ],
+    "login_risk_ranges": [
+      { "min": 14, "score": 40 },
+      { "min": 7, "score": 15 },
+      { "min": 0, "score": 0 }
+    ]
+  },
+  "new_server_cps": {
+    "cumulative_value_ranges": [
+      { "min": 15000, "score": 30 },
+      { "min": 10000, "score": 25 },
+      { "min": 5000, "score": 20 },
+      { "min": 2000, "score": 12 },
+      { "min": 0, "score": 5 }
+    ],
+    "recent_value_ranges": [
+      { "min": 3000, "score": 40 },
+      { "min": 1500, "score": 30 },
+      { "min": 500, "score": 20 },
+      { "min": 100, "score": 10 },
+      { "min": 0, "score": 0 }
+    ],
+    "login_risk_ranges": [
+      { "min": 14, "score": 40 },
+      { "min": 7, "score": 15 },
+      { "min": 0, "score": 0 }
+    ]
+  },
+  "groups": {
+    "老服自然量": {
+      "cumulative_value_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "total_value_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "value_amount_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "contact_priority_thresholds": [
+        { "min": 70, "label": "立即触达" },
+        { "min": 55, "label": "优先触达" },
+        { "min": 35, "label": "观察跟进" },
+        { "min": 0, "label": "暂不触达" }
+      ],
+      "weekly_recharge_risk_ranges": [
+        { "min": 500, "score": 0 },
+        { "min": 100, "score": 5 },
+        { "min": 50, "score": 10 },
+        { "min": 0.01, "score": 20 },
+        { "min": 0, "score": 30 }
+      ],
+      "weekly_risk_ranges": [
+        { "min": 500, "score": 0 },
+        { "min": 100, "score": 5 },
+        { "min": 50, "score": 10 },
+        { "min": 0.01, "score": 20 },
+        { "min": 0, "score": 30 }
+      ],
+      "login_risk_ranges": [
+        { "min": 14, "score": 40 },
+        { "min": 7, "score": 15 },
+        { "min": 0, "score": 0 }
+      ]
+    },
+    "老服CPS": {
+      "cumulative_value_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "total_value_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "value_amount_ranges": [
+        { "min": 20000, "score": 40 },
+        { "min": 5000, "score": 35 },
+        { "min": 1000, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 0, "score": 5 }
+      ],
+      "contact_priority_thresholds": [
+        { "min": 70, "label": "立即触达" },
+        { "min": 55, "label": "优先触达" },
+        { "min": 35, "label": "观察跟进" },
+        { "min": 0, "label": "暂不触达" }
+      ],
+      "weekly_recharge_risk_ranges": [
+        { "min": 500, "score": 0 },
+        { "min": 100, "score": 5 },
+        { "min": 50, "score": 10 },
+        { "min": 0.01, "score": 20 },
+        { "min": 0, "score": 30 }
+      ],
+      "weekly_risk_ranges": [
+        { "min": 500, "score": 0 },
+        { "min": 100, "score": 5 },
+        { "min": 50, "score": 10 },
+        { "min": 0.01, "score": 20 },
+        { "min": 0, "score": 30 }
+      ],
+      "login_risk_ranges": [
+        { "min": 14, "score": 40 },
+        { "min": 7, "score": 15 },
+        { "min": 0, "score": 0 }
+      ]
+    },
+    "新服自然量": {
+      "cumulative_value_ranges": [
+        { "min": 1000, "score": 30 },
+        { "min": 500, "score": 20 },
+        { "min": 300, "score": 15 },
+        { "min": 100, "score": 10 },
+        { "min": 0, "score": 5 }
+      ],
+      "total_value_ranges": [
+        { "min": 1000, "score": 30 },
+        { "min": 500, "score": 20 },
+        { "min": 300, "score": 15 },
+        { "min": 100, "score": 10 },
+        { "min": 0, "score": 5 }
+      ],
+      "value_amount_ranges": [
+        { "min": 1000, "score": 30 },
+        { "min": 500, "score": 20 },
+        { "min": 300, "score": 15 },
+        { "min": 100, "score": 10 },
+        { "min": 0, "score": 5 }
+      ],
+      "contact_priority_thresholds": [
+        { "min": 70, "label": "立即触达" },
+        { "min": 55, "label": "优先触达" },
+        { "min": 35, "label": "观察跟进" },
+        { "min": 0, "label": "暂不触达" }
+      ],
+      "weekly_value_ranges": [
+        { "min": 1000, "score": 35 },
+        { "min": 500, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 50, "score": 5 },
+        { "min": 0, "score": 0 }
+      ],
+      "weekly_risk_ranges": [
+        { "min": 1000, "score": 35 },
+        { "min": 500, "score": 25 },
+        { "min": 100, "score": 15 },
+        { "min": 50, "score": 5 },
+        { "min": 0, "score": 0 }
+      ],
+      "login_risk_ranges": [
+        { "min": 14, "score": 40 },
+        { "min": 7, "score": 15 },
+        { "min": 0, "score": 0 }
+      ]
+    },
+    "新服CPS": {
+      "cumulative_value_ranges": [
+        { "min": 15000, "score": 30 },
+        { "min": 10000, "score": 25 },
+        { "min": 5000, "score": 20 },
+        { "min": 2000, "score": 12 },
+        { "min": 0, "score": 5 }
+      ],
+      "total_value_ranges": [
+        { "min": 15000, "score": 30 },
+        { "min": 10000, "score": 25 },
+        { "min": 5000, "score": 20 },
+        { "min": 2000, "score": 12 },
+        { "min": 0, "score": 5 }
+      ],
+      "value_amount_ranges": [
+        { "min": 15000, "score": 30 },
+        { "min": 10000, "score": 25 },
+        { "min": 5000, "score": 20 },
+        { "min": 2000, "score": 12 },
+        { "min": 0, "score": 5 }
+      ],
+      "contact_priority_thresholds": [
+        { "min": 70, "label": "立即触达" },
+        { "min": 55, "label": "优先触达" },
+        { "min": 35, "label": "观察跟进" },
+        { "min": 0, "label": "暂不触达" }
+      ],
+      "recent_value_ranges": [
+        { "min": 3000, "score": 40 },
+        { "min": 1500, "score": 30 },
+        { "min": 500, "score": 20 },
+        { "min": 100, "score": 10 },
+        { "min": 0, "score": 0 }
+      ],
+      "weekly_risk_ranges": [
+        { "min": 3000, "score": 40 },
+        { "min": 1500, "score": 30 },
+        { "min": 500, "score": 20 },
+        { "min": 100, "score": 10 },
+        { "min": 0, "score": 0 }
+      ],
+      "login_risk_ranges": [
+        { "min": 14, "score": 40 },
+        { "min": 7, "score": 15 },
+        { "min": 0, "score": 0 }
+      ]
+    }
+  }
+}

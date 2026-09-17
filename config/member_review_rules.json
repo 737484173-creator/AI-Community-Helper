@@ -1,0 +1,5 @@
+{
+  "mode": "automatic",
+  "auto_approve_enabled": true,
+  "minimum_auto_approve_confidence": 0.95
+}

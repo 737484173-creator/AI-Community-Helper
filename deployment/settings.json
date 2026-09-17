@@ -1,0 +1,11 @@
+{
+  "ListenAddress": "127.0.0.1",
+  "Port": 8502,
+  "HealthPath": "/_stcore/health",
+  "ScheduledTaskName": "AIDC Workbench",
+  "TailscaleService": "Tailscale",
+  "TailscalePath": "C:\\Program Files\\Tailscale\\tailscale.exe",
+  "CloudflaredService": "cloudflared",
+  "LogDirectory": "logs\\deployment",
+  "PidFileName": "aidc-dashboard.pid.json"
+}

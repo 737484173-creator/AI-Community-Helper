@@ -1,0 +1,42 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.ae-cli/
+
+# Local IDE / agent state.
+.agents/
+.codex/
+.streamlit/secrets.toml
+
+# Runtime data can contain player records, message content, and process state.
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.pid
+*.lock
+
+# Logs and local coverage/build artifacts.
+logs/
+*.log
+.coverage
+htmlcov/
+dist/
+build/
+
+# Archived working copies include nested repositories and virtualenvs.
+legacy/
+
+# Machine-local helper binaries are installed separately.
+tools/*.exe
+
+# Accidental local scratch file.
+=
+
+# Machine-specific deployment state. Never commit tunnel tokens or credentials.
+deployment/machine-settings.json
+deployment/*.token
+deployment/*credentials*.json
+deployment/config.yml

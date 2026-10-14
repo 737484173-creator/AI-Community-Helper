@@ -18,10 +18,13 @@ function Get-AidcScheduledTask {
         return Get-ScheduledTask -TaskName $settings.ScheduledTaskName -ErrorAction Stop
     }
     catch [Microsoft.Management.Infrastructure.CimException] {
+        if (-not (Test-AidcAdministrator)) {
+            throw "Unable to inspect the AIDC scheduled task without Administrator privileges. Reopen PowerShell as Administrator."
+        }
         return $null
     }
     catch [System.UnauthorizedAccessException] {
-        return $null
+        throw "Unable to inspect the AIDC scheduled task without Administrator privileges. Reopen PowerShell as Administrator."
     }
 }
 
@@ -44,12 +47,27 @@ function Stop-AidcProcessTree {
         return
     }
 
-    $record = Get-Content -LiteralPath $pidFile -Raw | ConvertFrom-Json
+    try {
+        $record = Get-Content -LiteralPath $pidFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $pidFile)) {
+            return
+        }
+        throw
+    }
     $useSupervisor = $record.PSObject.Properties.Name -contains "SupervisorStartedAtFileTimeUtc"
     $processId = if ($useSupervisor) { [int]$record.SupervisorId } else { [int]$record.ProcessId }
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if (-not $process -and $useSupervisor) {
+        # Stop-ScheduledTask may end the supervisor before its Streamlit child.
+        # Fall back to the recorded child instead of abandoning an orphan.
+        $useSupervisor = $false
+        $processId = [int]$record.ProcessId
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    }
     if (-not $process) {
-        Remove-Item -LiteralPath $pidFile -Force
+        Remove-AidcPidFileSafely -Path $pidFile | Out-Null
         return
     }
 
@@ -92,20 +110,17 @@ function Stop-AidcProcessTree {
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to stop AIDC process tree $processId. Run this script as Administrator."
     }
-    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    Remove-AidcPidFileSafely -Path $pidFile | Out-Null
 }
 
 function Start-Aidc {
-    if (Test-AidcLocalHealth -Settings $settings) {
-        Write-Host "AIDC is already online: $(Get-AidcLocalHealthUri -Settings $settings)"
-        return
-    }
-
     $task = Get-AidcScheduledTask
     if ($task) {
-        Start-ScheduledTask -InputObject $task
+        if ($task.State -ne "Running") {
+            Start-ScheduledTask -InputObject $task
+        }
     }
-    else {
+    elseif (-not (Test-AidcLocalHealth -Settings $settings)) {
         $runner = Join-Path $PSScriptRoot "run-aidc.ps1"
         $encodedCommand = ConvertTo-AidcEncodedCommand -ScriptPath $runner
         $argumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand)
@@ -117,6 +132,11 @@ function Start-Aidc {
             -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $logDirectory "manual-launch.out.log") `
             -RedirectStandardError (Join-Path $logDirectory "manual-launch.err.log") | Out-Null
+    }
+
+    if (Test-AidcLocalHealth -Settings $settings) {
+        Write-Host "AIDC is already online and its supervisor is running: $(Get-AidcLocalHealthUri -Settings $settings)"
+        return
     }
 
     if (-not (Wait-AidcHealth -ExpectedHealthy $true)) {
@@ -132,7 +152,7 @@ function Stop-Aidc {
         Start-Sleep -Seconds 2
     }
 
-    if (Test-AidcLocalHealth -Settings $settings) {
+    if (Test-Path -LiteralPath $pidFile) {
         Stop-AidcProcessTree
     }
 

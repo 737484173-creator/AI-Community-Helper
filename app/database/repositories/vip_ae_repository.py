@@ -25,6 +25,8 @@ class AEVIPSnapshotRepository(BaseRepository):
         rolling_28d_window: str = "",
         purchase_source_row_count: int = 0,
         purchase_lifetime_window: str = "",
+        purchase_7d_window: str = "",
+        purchase_14d_window: str = "",
         purchase_recent_window: str = "",
     ) -> int:
         snapshot_rows = list(rows)
@@ -84,9 +86,10 @@ class AEVIPSnapshotRepository(BaseRepository):
                 INSERT INTO vip_purchase_packages (
                     project_id, role_id, window_key, window_label,
                     giftbox_id, giftbox_name, category, purchase_count,
-                    payment_amount, items_json, synced_at
+                    payment_amount, payment_channel, currency_name,
+                    source_event, is_demand_evidence, items_json, synced_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -99,6 +102,10 @@ class AEVIPSnapshotRepository(BaseRepository):
                         row["category"],
                         row.get("purchase_count", 0),
                         row.get("payment_amount", 0),
+                        row.get("payment_channel", "cash"),
+                        row.get("currency_name", "美元"),
+                        row.get("source_event", "role_pay"),
+                        int(bool(row.get("is_demand_evidence", True))),
                         row.get("items_json", "[]"),
                         finished_at,
                     )
@@ -113,9 +120,10 @@ class AEVIPSnapshotRepository(BaseRepository):
                     cumulative_window, weekly_window,
                     previous_week_window, rolling_28d_window,
                     purchase_source_row_count, purchase_vip_package_count,
-                    purchase_lifetime_window, purchase_recent_window
+                    purchase_lifetime_window, purchase_7d_window,
+                    purchase_14d_window, purchase_recent_window
                 )
-                VALUES (?, 'SUCCESS', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, 'SUCCESS', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
@@ -130,6 +138,8 @@ class AEVIPSnapshotRepository(BaseRepository):
                     purchase_source_row_count,
                     len(package_rows),
                     purchase_lifetime_window,
+                    purchase_7d_window,
+                    purchase_14d_window,
                     purchase_recent_window,
                 ),
             )
@@ -195,6 +205,18 @@ class AEVIPSnapshotRepository(BaseRepository):
             (project_id,),
         )
 
+    def get_latest_successful_run(self, project_id: int) -> sqlite3.Row | None:
+        return self._fetch_one(
+            """
+            SELECT *
+            FROM vip_ae_sync_runs
+            WHERE project_id = ? AND status = 'SUCCESS'
+            ORDER BY finished_at DESC, id DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        )
+
     def list_purchase_packages(
         self,
         project_id: int,
@@ -208,6 +230,21 @@ class AEVIPSnapshotRepository(BaseRepository):
             ORDER BY window_key, payment_amount DESC, purchase_count DESC, giftbox_id
             """,
             (project_id, role_id),
+        )
+
+    def list_purchase_packages_by_channel(
+        self,
+        project_id: int,
+        payment_channel: str,
+    ) -> list[sqlite3.Row]:
+        return self._fetch_all(
+            """
+            SELECT *
+            FROM vip_purchase_packages
+            WHERE project_id = ? AND payment_channel = ?
+            ORDER BY role_id, window_key, payment_amount DESC, giftbox_id
+            """,
+            (project_id, payment_channel),
         )
 
     def count_purchase_packages(self, project_id: int) -> int:

@@ -15,7 +15,7 @@ from app.dashboard.views.vip_common import (
 )
 from app.dashboard.views import vip_profile
 from app.vip.ae_sync import AEVIPSyncError, AEVIPSyncService, DEFAULT_AE_PROJECT_ID
-from app.vip.server_merges import server_merge_summary
+from app.vip.server_merges import server_merge_config_revision, server_merge_summary
 from app.vip.service import (
     CONTACT_PRIORITIES,
     DEFAULT_VIP_FILE,
@@ -35,28 +35,31 @@ VIP_WORKBOOK_CACHE_VERSION = "vip-rules-2026-09-17-profile-v1"
 
 def _load_uploaded_workbook(st, file_name: str, file_bytes: bytes):
     @st.cache_data(show_spinner=False)
-    def _cached_uploaded_workbook(name: str, payload: bytes):
+    def _cached_uploaded_workbook(name: str, payload: bytes, merge_revision: tuple[int, int]):
+        del merge_revision
         source = BytesIO(payload)
         source.name = name
         return load_vip_workbook(source)
 
-    return _cached_uploaded_workbook(file_name, file_bytes)
+    return _cached_uploaded_workbook(file_name, file_bytes, server_merge_config_revision())
 
 
 def _load_default_workbook(st, path: str, fingerprint: tuple[int, int]):
     @st.cache_data(show_spinner=False)
-    def _cached_default_workbook(file_path: str, source_fingerprint: tuple[int, int], rules_version: str):
+    def _cached_default_workbook(file_path: str, source_fingerprint: tuple[int, int], rules_version: str, merge_revision: tuple[int, int]):
+        del source_fingerprint, rules_version, merge_revision
         return load_vip_workbook(DEFAULT_VIP_FILE.__class__(file_path))
 
-    return _cached_default_workbook(path, fingerprint, VIP_WORKBOOK_CACHE_VERSION)
+    return _cached_default_workbook(path, fingerprint, VIP_WORKBOOK_CACHE_VERSION, server_merge_config_revision())
 
 
 def _load_ae_workbook(st, db_path: str, snapshot_revision: tuple[int, str]):
     @st.cache_data(show_spinner=False)
-    def _cached_ae_workbook(path: str, source_revision: tuple[int, str], rules_version: str):
+    def _cached_ae_workbook(path: str, source_revision: tuple[int, str], rules_version: str, merge_revision: tuple[int, int]):
+        del source_revision, rules_version, merge_revision
         return load_ae_vip_workbook(Path(path), DEFAULT_AE_PROJECT_ID)
 
-    return _cached_ae_workbook(db_path, snapshot_revision, VIP_WORKBOOK_CACHE_VERSION)
+    return _cached_ae_workbook(db_path, snapshot_revision, VIP_WORKBOOK_CACHE_VERSION, server_merge_config_revision())
 
 
 def _file_fingerprint(path: str | Path) -> tuple[int, int]:
@@ -821,6 +824,8 @@ def _render_data_source(st, db_path) -> None:
                     f"前七日对比 {result.previous_week_window}；28 日基准 {result.rolling_28d_window}；"
                     f"画像礼包 {result.purchase_package_count:,} 条。"
                 )
+                if result.dragon_coin_warning:
+                    st.warning(result.dragon_coin_warning)
             except AEVIPSyncError as exc:
                 st.error(f"AE 同步失败：{exc}")
         uploaded_file = st.file_uploader(

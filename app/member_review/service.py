@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.database.repositories.member_review_repository import MemberReviewRepository
-from app.member_review.config_loader import load_review_rules, load_server_mapping
+from app.member_review.config_loader import (
+    current_server_date,
+    load_planned_server_dates,
+    load_review_rules,
+    load_server_mapping,
+)
 from app.member_review.discord_adapter import DiscordActionResult, DiscordJoinRequest, MemberReviewDiscordAdapter
 from app.member_review.messages import generate_rejection_reason
 from app.member_review.parser import parse_member_application
@@ -30,8 +35,15 @@ class MemberReviewService:
             bot_token=settings.discord_bot_token,
             proxy=settings.discord_proxy,
         )
-        self.server_mapping = load_server_mapping()
         self.rules = load_review_rules()
+
+    def _parse_application(self, text: str):
+        reference = current_server_date()
+        return parse_member_application(
+            text,
+            load_server_mapping(as_of=reference),
+            planned_server_dates=load_planned_server_dates(as_of=reference),
+        )
 
     def ingest_manual_application(
         self,
@@ -40,7 +52,7 @@ class MemberReviewService:
         discord_user_id: str,
         raw_application: str,
     ) -> int:
-        parsed = parse_member_application(raw_application, self.server_mapping)
+        parsed = self._parse_application(raw_application)
         rejection_reason = None if parsed.status == "可通过" else generate_rejection_reason(parsed.reason_code)
         auto_approvable = (
             parsed.status == "可通过"
@@ -72,7 +84,7 @@ class MemberReviewService:
         raw_application: str | None = None,
     ) -> int:
         application_text = (raw_application or discord_username or discord_user_id).strip()
-        parsed = parse_member_application(application_text, self.server_mapping)
+        parsed = self._parse_application(application_text)
         internal_reason = (
             f"{parsed.internal_reason}；来自 Discord 待定成员同步，原生申请表答案当前无法通过 Bot API 直接读取。"
         )

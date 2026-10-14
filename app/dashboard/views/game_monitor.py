@@ -23,6 +23,7 @@ from app.dashboard.views.game_monitor_risk import (
 from app.database.repositories.game_chat_repository import GameChatRepository
 from app.database.repositories.vip_ae_repository import AEVIPSnapshotRepository
 from app.game_monitor.ae_sync import AEGameChatSyncError, AEGameChatSyncService
+from app.vip.server_merges import server_merge_config_revision
 from app.vip.ae_sync import DEFAULT_AE_PROJECT_ID
 from app.vip.service import load_ae_vip_workbook
 
@@ -342,8 +343,9 @@ def _load_rows(
         end: str,
         servers: tuple[str, ...],
         database_fingerprint: tuple[int, int],
+        merge_revision: tuple[int, int],
     ):
-        del database_fingerprint
+        del database_fingerprint, merge_revision
         return [
             dict(row)
             for row in GameChatRepository(path).list_messages(
@@ -360,6 +362,7 @@ def _load_rows(
         end_date.isoformat(),
         tuple(str(value) for value in server_ids),
         file_fingerprint(Path(db_path)),
+        server_merge_config_revision(),
     )
 
 

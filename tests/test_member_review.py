@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
+from datetime import date
+
 import pytest
 
 from app.database.migrations.init_db import init_database
 from app.database.repositories.member_review_repository import MemberReviewRepository
+from app.member_review.config_loader import load_planned_server_dates, load_server_mapping
 from app.member_review.discord_adapter import DiscordActionResult, DiscordJoinRequest
 from app.member_review.messages import generate_rejection_reason
 from app.member_review.nickname_formatter import generate_discord_nickname, normalize_server_id
 from app.member_review.parser import parse_member_application
 from app.member_review.service import MemberReviewService
+from config.settings import BASE_DIR
 
 
 SERVER_MAPPING = {"1": "S1", "6": "S6", "11": "S11", "14": "S14"}
@@ -83,7 +88,152 @@ def test_rejection_reason_is_english() -> None:
     reason = generate_rejection_reason("MISSING_SERVER_ID")
 
     assert "server ID" in reason
-    assert "S14 Bubble" in reason
+    assert "S51 Bubble" in reason
+
+
+def test_open_servers_are_contiguous_through_s51_on_september_20() -> None:
+    server_mapping = load_server_mapping(as_of=date(2026, 9, 20))
+
+    assert set(server_mapping) == {str(server_id) for server_id in range(1, 52)}
+    assert server_mapping["11"] == "S11"
+    assert server_mapping["12"] == "S11"
+
+
+@pytest.mark.parametrize(
+    ("source", "primary"),
+    [
+        ("2", "6"), ("3", "6"), ("4", "1"), ("5", "1"),
+        ("7", "6"), ("8", "1"), ("9", "1"), ("10", "6"),
+        ("12", "11"), ("13", "11"), ("15", "14"), ("16", "14"),
+        ("17", "19"), ("18", "20"), ("21", "19"),
+        ("22", "23"), ("24", "23"), ("26", "25"), ("27", "25"),
+        ("29", "28"), ("30", "28"), ("32", "31"), ("33", "31"),
+        ("34", "36"), ("35", "36"),
+    ],
+)
+def test_merged_source_server_is_approved_as_primary(source: str, primary: str) -> None:
+    parsed = parse_member_application(
+        f"S{source} Bubble",
+        load_server_mapping(as_of=date(2026, 9, 21)),
+    )
+
+    assert parsed.status == "可通过"
+    assert parsed.reason_code == "PASS"
+    assert parsed.server_id == primary
+    assert parsed.server_name == f"S{primary}"
+    assert parsed.raw_server_input == f"S{source}"
+    assert parsed.discord_nickname == f"S{primary} Bubble"
+    assert parsed.detected_server_ids == (source,)
+
+
+def test_merged_source_still_requires_player_name() -> None:
+    parsed = parse_member_application("S12", load_server_mapping(as_of=date(2026, 9, 21)))
+
+    assert parsed.status == "信息不完整"
+    assert parsed.reason_code == "MISSING_PLAYER_NAME"
+    assert parsed.server_id == "11"
+    assert parsed.raw_server_input == "S12"
+
+
+def test_merge_effective_date_and_primary_opening_are_respected() -> None:
+    assert load_server_mapping(as_of=date(2026, 9, 17))["26"] == "S26"
+    assert load_server_mapping(as_of=date(2026, 9, 18))["26"] == "S25"
+    assert load_server_mapping(as_of=date(2026, 7, 20))["34"] == "S34"
+    assert load_server_mapping(as_of=date(2026, 7, 27))["34"] == "S36"
+
+
+def test_runtime_mapping_file_matches_current_merge_rules() -> None:
+    # The running Bot reads this file without a restart, so it must agree with
+    # the fresh-process merge calculation for all currently open servers.
+    static_mapping = json.loads(
+        (BASE_DIR / "config" / "server_mapping.json").read_text(encoding="utf-8")
+    )
+    active_mapping = load_server_mapping(as_of=date(2026, 9, 21))
+
+    assert {server_id: static_mapping[server_id] for server_id in active_mapping} == active_mapping
+
+
+@pytest.mark.parametrize(
+    ("day", "last_open_server"),
+    [
+        (date(2026, 9, 20), 51),
+        (date(2026, 9, 21), 52),
+        (date(2026, 9, 27), 52),
+        (date(2026, 9, 28), 53),
+        (date(2026, 10, 4), 53),
+        (date(2026, 10, 5), 54),
+        (date(2026, 10, 8), 55),
+    ],
+)
+def test_planned_servers_activate_on_opening_day(day: date, last_open_server: int) -> None:
+    active = load_server_mapping(as_of=day)
+
+    assert max(map(int, active)) == last_open_server
+
+
+def test_future_servers_are_registered_but_not_yet_active() -> None:
+    planned = load_planned_server_dates(as_of=date(2026, 9, 20))
+
+    assert planned == {
+        "52": "2026-09-21",
+        "53": "2026-09-28",
+        "54": "2026-10-05",
+        "55": "2026-10-08",
+    }
+    parsed = parse_member_application(
+        "S52 Bubble",
+        load_server_mapping(as_of=date(2026, 9, 20)),
+        planned_server_dates=planned,
+    )
+    assert parsed.status == "需要人工审核"
+    assert parsed.reason_code == "SERVER_NOT_OPEN_YET"
+    assert parsed.server_name == "S52"
+
+
+def test_open_and_planned_servers_together_require_manual_review() -> None:
+    parsed = parse_member_application(
+        "S51 S52 Bubble",
+        load_server_mapping(as_of=date(2026, 9, 20)),
+        planned_server_dates=load_planned_server_dates(as_of=date(2026, 9, 20)),
+    )
+
+    assert parsed.status == "需要人工审核"
+    assert parsed.reason_code == "MULTIPLE_SERVER_IDS"
+
+
+def test_planned_server_is_not_auto_rejected_with_another_invalid_number() -> None:
+    parsed = parse_member_application(
+        "S999 S52 Bubble",
+        load_server_mapping(as_of=date(2026, 9, 20)),
+        planned_server_dates=load_planned_server_dates(as_of=date(2026, 9, 20)),
+    )
+
+    assert parsed.status == "需要人工审核"
+    assert parsed.reason_code == "SERVER_NOT_OPEN_YET"
+
+
+@pytest.mark.parametrize("server_id", range(45, 52))
+@pytest.mark.parametrize("prefix", ("", "S"))
+def test_new_servers_are_recognized(server_id: int, prefix: str) -> None:
+    parsed = parse_member_application(
+        f"{prefix}{server_id} Bubble",
+        load_server_mapping(as_of=date(2026, 9, 20)),
+    )
+
+    assert parsed.status == "可通过"
+    assert parsed.server_id == str(server_id)
+    assert parsed.server_name == f"S{server_id}"
+    assert parsed.discord_nickname == f"S{server_id} Bubble"
+
+
+def test_unconfigured_s56_is_not_accepted() -> None:
+    parsed = parse_member_application(
+        "S56 Bubble",
+        load_server_mapping(as_of=date(2026, 10, 8)),
+    )
+
+    assert parsed.status == "区服ID异常"
+    assert parsed.reason_code == "INVALID_SERVER_ID"
 
 
 class FakeManualActionAdapter:
@@ -226,6 +376,61 @@ def test_member_review_service_syncs_discord_join_requests(tmp_path) -> None:
     assert rows[0]["processed"] == 1
     assert logs[0]["reviewer"] == "Discord Auto Review"
     assert logs[0]["discord_nickname"] == "S14 Bubble"
+
+
+def test_member_review_service_approves_s51_join_request(tmp_path) -> None:
+    db_path = tmp_path / "community.db"
+    init_database(db_path)
+    adapter = FakeJoinRequestAdapter(raw_application="S51 Bubble")
+    service = MemberReviewService(db_path, adapter=adapter)
+
+    assert service.sync_discord_join_requests() == 1
+    assert adapter.approved_requests == [("guild-1", "request-1", "1001", "S51 Bubble")]
+    assert adapter.rejected_requests == []
+    rows = MemberReviewRepository(db_path).list_filtered(processed_filter="已处理")
+    assert rows[0]["server_id"] == "51"
+    assert rows[0]["review_status"] == "已通过"
+
+
+def test_member_review_service_approves_s12_join_request_as_s11(tmp_path) -> None:
+    db_path = tmp_path / "community.db"
+    init_database(db_path)
+    adapter = FakeJoinRequestAdapter(raw_application="S12 Bubble")
+    service = MemberReviewService(db_path, adapter=adapter)
+
+    assert service.sync_discord_join_requests() == 1
+    assert adapter.approved_requests == [("guild-1", "request-1", "1001", "S11 Bubble")]
+    assert adapter.rejected_requests == []
+    row = MemberReviewRepository(db_path).list_filtered(processed_filter="已处理")[0]
+    assert row["server_id"] == "11"
+    assert row["server_name"] == "S11"
+    assert row["raw_server_input"] == "S12"
+    assert row["review_status"] == "已通过"
+
+
+def test_running_service_activates_s52_without_restart_and_holds_early_request(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "community.db"
+    init_database(db_path)
+    current_day = {"value": date(2026, 9, 20)}
+    monkeypatch.setattr(
+        "app.member_review.service.current_server_date",
+        lambda: current_day["value"],
+    )
+    adapter = FakeJoinRequestAdapter(raw_application="S52 Bubble")
+    service = MemberReviewService(db_path, adapter=adapter)
+
+    assert service.sync_discord_join_requests() == 1
+    early_row = MemberReviewRepository(db_path).list_filtered()[0]
+    assert early_row["review_status"] == "需要人工审核"
+    assert early_row["reason_code"] == "SERVER_NOT_OPEN_YET"
+    assert adapter.approved_requests == []
+    assert adapter.rejected_requests == []
+
+    current_day["value"] = date(2026, 9, 21)
+    assert service.sync_discord_join_requests() == 1
+    opened_row = MemberReviewRepository(db_path).get(int(early_row["id"]))
+    assert opened_row["review_status"] == "已通过"
+    assert adapter.approved_requests == [("guild-1", "request-1", "1001", "S52 Bubble")]
 
 
 def test_member_review_service_auto_rejects_incomplete_join_requests(tmp_path) -> None:

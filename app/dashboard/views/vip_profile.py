@@ -14,6 +14,8 @@ from app.vip.profile import (
     build_profile_insight,
     cultivation_progress,
     giftbox_display_name,
+    infer_package_price_tiers,
+    normalize_purchase_rows,
     payment_direction,
     player_option_label,
     recommendation_state,
@@ -39,6 +41,12 @@ def _safe_text(value: object, fallback: str = "-") -> str:
         return fallback
     text = str(value).strip()
     return text or fallback
+
+
+def _safe_bool(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() not in {"", "0", "false", "no", "none", "null"}
+    return bool(value)
 
 
 def _player_candidates(dataframe: pd.DataFrame, query: str, server_filter: str) -> pd.DataFrame:
@@ -151,15 +159,20 @@ def _render_recommendations(st, insight: ProfileInsight) -> None:
             '<div><strong>需求方向</strong><br><span>综合购买偏好、战力缺口与养成阶段</span></div>'
             '<span>待同步</span></div><div class="vip-profile-empty"><div>'
             '<strong>暂不输出具体消费方向</strong>'
-            '<p>需要同时具备 role_pay 礼包明细与玩家分项战力；缺失任一来源时不会使用推测结果。</p>'
+            '<p>需要具备 role_pay 或龙币 Item 消费明细，并同时具备分项战力；缺失时不会使用推测结果。</p>'
             '</div></div></div>',
             unsafe_allow_html=True,
         )
         return
     cards: list[str] = []
     for index, signal in enumerate(insight.recommendations, start=1):
-        examples = "、".join((*signal.packages[:2], *signal.items[:2])) or "暂无可展示名称"
+        examples = "、".join(signal.packages[:3]) or "礼包名称待补齐"
         gap_copy = f"分项缺口 {signal.gap_ratio:.0%}" if signal.gap_ratio > 0 else "分项接近同阶段基准"
+        recent_copy = (
+            f"档位累计 ${signal.recent_amount:,.2f}"
+            if signal.recent_amount > 0
+            else "暂无近 30 日消费"
+        )
         cards.append(
             f'<div class="vip-demand-card{" primary" if index == 1 else ""}">'
             f'<div class="vip-demand-rank">0{index}</div><div class="vip-demand-main">'
@@ -167,66 +180,189 @@ def _render_recommendations(st, insight: ProfileInsight) -> None:
             f'<div class="vip-demand-track"><i style="width:{min(signal.score, 100):.1f}%"></i></div>'
             '</div><div class="vip-demand-evidence">'
             f'<b>{signal.score:.0f}</b><span>需求方向指数</span>'
-            f'<em>近30日 {signal.recent_amount:,.2f} · {escape(gap_copy)}</em></div></div>'
+            f'<em>近30日 {escape(recent_copy)} · {escape(gap_copy)}</em></div></div>'
         )
     st.markdown(
         '<div class="vip-profile-panel vip-demand-panel"><div class="vip-profile-panel-head">'
-        '<div><strong>需求方向</strong><br><span>55% 购买偏好 + 35% 同阶段战力缺口 + 10% 解锁阶段</span></div>'
+        '<div><strong>需求方向</strong><br><span>55% 礼包名与档位偏好 + 35% VIP 榜单战力缺口 + 10% 解锁阶段</span></div>'
         f'<span>置信度 {escape(insight.confidence)}</span></div>'
         f'<div class="vip-demand-list">{"".join(cards)}</div></div>',
         unsafe_allow_html=True,
     )
 
 
-def _render_purchase_panel(st, purchase_rows: pd.DataFrame) -> None:
+def _render_purchase_panel(
+    st,
+    purchase_rows: pd.DataFrame,
+    price_tiers: dict[str, float],
+    window_status: dict[str, str],
+) -> None:
+    selected_range = st.segmented_control(
+        "礼包偏好时间",
+        options=("近7天", "近14天", "总览"),
+        default="总览",
+        key="vip_profile_purchase_range",
+    ) or "总览"
+    window_key = {
+        "近7天": "recent_7d",
+        "近14天": "recent_14d",
+        "总览": "lifetime",
+    }[selected_range]
     if purchase_rows.empty:
         st.markdown(
             '<div class="vip-profile-panel"><div class="vip-profile-panel-head">'
-            '<div><strong>礼包与道具偏好</strong><br><span>基于 role_pay 的真实购买内容</span></div>'
+            '<div><strong>礼包偏好</strong><br><span>按礼包名归类，按标准档位 × 购买次数累计</span></div>'
             '<span>待同步</span></div><div class="vip-profile-empty"><div>'
             '<strong>购买明细尚未写入本地画像快照</strong>'
-            '<p>同步成功后展示礼包、道具、购买次数和实付金额。</p>'
+            '<p>同步成功后将不同支付方式合并到同一礼包档位。</p>'
             '</div></div></div>',
             unsafe_allow_html=True,
         )
         return
-    lifetime = purchase_rows[purchase_rows["window_key"].astype(str).eq("lifetime")].copy()
-    lifetime["payment_amount"] = pd.to_numeric(lifetime["payment_amount"], errors="coerce").fillna(0)
-    lifetime["purchase_count"] = pd.to_numeric(lifetime["purchase_count"], errors="coerce").fillna(0)
-    ranked = lifetime.sort_values(
-        ["payment_amount", "purchase_count"],
-        ascending=[False, False],
-        kind="stable",
-    ).head(5)
-    maximum = max(float(ranked["payment_amount"].max()) if not ranked.empty else 0.0, 1.0)
+    if window_key != "lifetime" and not window_status.get(window_key):
+        st.markdown(
+            '<div class="vip-profile-panel"><div class="vip-profile-panel-head">'
+            f'<div><strong>礼包偏好 · {escape(selected_range)}</strong><br>'
+            '<span>该窗口需要独立的 AE 汇总，不能从 30 天合计反推</span></div>'
+            '<span>待同步</span></div><div class="vip-profile-empty"><div>'
+            '<strong>该时间窗口尚未同步</strong>'
+            '<p>请执行一次“同步 AE 数据”；同步完成后将展示真实的礼包购买次数与档位累计。</p>'
+            '</div></div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+    purchase_rows = normalize_purchase_rows(purchase_rows, price_tiers=price_tiers)
+    selected_rows = purchase_rows[
+        purchase_rows["window_key"].astype(str).eq(window_key)
+    ].copy()
+    if selected_rows.empty:
+        st.markdown(
+            '<div class="vip-profile-panel"><div class="vip-profile-panel-head">'
+            f'<div><strong>礼包偏好 · {escape(selected_range)}</strong><br>'
+            '<span>现金与龙币购买合并到同一礼包档位</span></div>'
+            f'<span>{escape(window_status.get(window_key) or selected_range)}</span></div>'
+            '<div class="vip-profile-empty"><div><strong>该时间范围没有匹配到礼包购买</strong>'
+            '<p>数据窗口已成功加载，这代表该玩家在所选时间内没有可归因的礼包记录。</p>'
+            '</div></div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+    if "payment_channel" not in selected_rows.columns:
+        selected_rows["payment_channel"] = "cash"
+    if "currency_name" not in selected_rows.columns:
+        selected_rows["currency_name"] = "美元"
+    if "is_demand_evidence" not in selected_rows.columns:
+        selected_rows["is_demand_evidence"] = True
+    selected_rows["payment_amount"] = pd.to_numeric(selected_rows["payment_amount"], errors="coerce").fillna(0)
+    selected_rows["purchase_count"] = pd.to_numeric(selected_rows["purchase_count"], errors="coerce").fillna(0)
+    selected_rows["is_demand_evidence"] = selected_rows["is_demand_evidence"].map(_safe_bool)
+    unmatched_coin = float(
+        selected_rows.loc[
+            selected_rows["payment_channel"].eq("dragon_coin")
+            & ~selected_rows["is_demand_evidence"],
+            "payment_amount",
+        ].sum()
+    )
+    coin_funding = selected_rows[
+        selected_rows["payment_channel"].eq("cash")
+        & selected_rows["category"].eq("龙币充值")
+    ].copy()
+    evidence = selected_rows[selected_rows["is_demand_evidence"]].copy()
+    evidence["display_name"] = evidence.apply(
+        lambda item: giftbox_display_name(
+            item.get("giftbox_name"), item.get("giftbox_id")
+        )[0],
+        axis=1,
+    )
+    evidence["display_id"] = (
+        evidence["giftbox_id"]
+        .fillna("")
+        .astype(str)
+        .str.removeprefix("dragon_coin:")
+        .str.split("::", n=1)
+        .str[0]
+    )
+    ranked = (
+        evidence.groupby(
+            ["display_name", "display_id", "category", "price_tier"],
+            dropna=False,
+            as_index=False,
+        )
+        .agg(purchase_count=("purchase_count", "sum"), tier_spend=("tier_spend", "sum"))
+        .sort_values(
+            ["tier_spend", "purchase_count"],
+            ascending=[False, False],
+            kind="stable",
+        )
+        .head(6)
+    )
+    maximum_spend = max(float(ranked["tier_spend"].max()), 1.0) if not ranked.empty else 1.0
     rows: list[str] = []
     for _, item in ranked.iterrows():
-        amount = float(item["payment_amount"])
-        width = 100 * amount / maximum
-        giftbox_name, name_missing = giftbox_display_name(
-            item.get("giftbox_name"),
-            item.get("giftbox_id"),
-        )
-        missing_badge = (
-            '<em class="vip-purchase-missing">名称待补充</em>'
-            if name_missing
-            else ""
-        )
+        tier = float(item["price_tier"])
+        tier_spend = float(item["tier_spend"])
+        width = 100 * tier_spend / maximum_spend
+        giftbox_name = str(item["display_name"])
+        tier_copy = f"${tier:,.2f} 档" if tier > 0 else "档位待匹配"
+        amount_label = f"${tier_spend:,.2f}" if tier > 0 else "—"
         rows.append(
             '<div class="vip-purchase-row"><div>'
             '<div class="vip-purchase-title">'
-            f'<strong>{escape(giftbox_name)}</strong>{missing_badge}</div>'
-            f'<span>{escape(_safe_text(item.get("category"), "其他"))} · {int(item["purchase_count"]):,} 次</span>'
+            f'<strong>{escape(giftbox_name)}</strong>'
+            f'</div>'
+            f'<span>{escape(_safe_text(item.get("category"), "其他"))} · {int(item["purchase_count"]):,} 次'
+            f' · {escape(tier_copy)} · ID {escape(str(item.get("display_id") or "-"))}</span>'
             f'<div class="vip-purchase-track"><i style="width:{width:.1f}%"></i></div></div>'
-            f'<b>{amount:,.2f}</b></div>'
+            f'<b>{escape(amount_label)}<small>档位累计</small></b></div>'
         )
-    window_label = _safe_text(lifetime.iloc[0].get("window_label"), "历史累计") if not lifetime.empty else "历史累计"
+    window_label = _safe_text(
+        window_status.get(window_key)
+        or selected_rows.iloc[0].get("window_label"),
+        "历史累计" if window_key == "lifetime" else selected_range,
+    )
+    unmatched_note = (
+        f'<div class="vip-purchase-note">另有 {unmatched_coin:,.0f} 龙币已消耗，但未唯一匹配到礼包奖励，未进入需求评分。</div>'
+        if unmatched_coin > 0
+        else ""
+    )
+    funding_note = ""
+    if not coin_funding.empty:
+        funding_names = []
+        for value in coin_funding["giftbox_name"].astype(str):
+            if value and value not in funding_names:
+                funding_names.append(value)
+        funding_note = (
+            '<div class="vip-purchase-note">'
+            f'现金购入龙币 ${coin_funding["payment_amount"].sum():,.2f}，'
+            f'共 {int(round(coin_funding["purchase_count"].sum())):,} 次；'
+            f'档位：{escape("、".join(funding_names[:6]))}。'
+            '购入龙币本身不代表具体养成需求，因此不重复计入礼包方向。'
+            '</div>'
+        )
+    cash_tier_total = float(
+        evidence.loc[evidence["payment_channel"].eq("cash"), "tier_spend"].sum()
+    )
+    fallback_tier_count = int(evidence["price_tier_source"].eq("当前记录均价").sum())
+    unmapped_tier_count = int(evidence["price_tier_source"].eq("档位待匹配").sum())
+    exception_copy = ""
+    if fallback_tier_count:
+        exception_copy += f' 其中 {fallback_tier_count} 条未形成榜单众数，暂用该记录的平均单价。'
+    if unmapped_tier_count:
+        exception_copy += f' 另有 {unmapped_tier_count} 条龙币记录尚未匹配到同款现金档位，不计金额权重。'
+    methodology_note = (
+        '<div class="vip-purchase-note">'
+        '<strong>档位计算：</strong>同一礼包取 VIP 榜单历史现金订单中最常出现的标准单价；'
+        '档位累计 = 标准档位 × 购买次数，例如 $19.99 × 3 次 = $59.97。'
+        f'当前现金订单按档位累计 ${cash_tier_total:,.2f}；龙币支付匹配到同款礼包后合并计算需求，'
+        f'但不会伪装成现金实付。{escape(exception_copy)}'
+        '</div>'
+    )
     st.markdown(
         '<div class="vip-profile-panel"><div class="vip-profile-panel-head">'
-        '<div><strong>礼包与道具偏好</strong><br><span>按礼包实付金额排序，不重复累计礼包内道具</span></div>'
+        f'<div><strong>礼包偏好 · {escape(selected_range)}</strong><br><span>现金与龙币购买合并到礼包档位；需求分类只看礼包名，不读取次要道具</span></div>'
         f'<span>{escape(window_label)}</span></div><div class="vip-profile-list">'
-        f'{"".join(rows) if rows else "<div class=\"vip-profile-empty\"><div><strong>暂无购买记录</strong></div></div>"}'
-        '</div></div>',
+        f'{"".join(rows) if rows else "<div class=\"vip-profile-empty\"><div><strong>暂无可归因的消费记录</strong></div></div>"}'
+        f'{methodology_note}{funding_note}{unmatched_note}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -245,14 +381,14 @@ def _render_power_gap_panel(st, insight: ProfileInsight) -> None:
         return
     rows = "".join(
         '<div class="vip-gap-row"><div>'
-        f'<strong>{escape(gap.label)}</strong><span>同阶段样本 {gap.peer_count} 人</span>'
+        f'<strong>{escape(gap.label)}</strong><span>{escape(gap.peer_basis)} · 样本 {gap.peer_count} 人</span>'
         f'<div class="vip-gap-track"><i style="width:{gap.gap_ratio * 100:.1f}%"></i></div></div>'
         f'<b>{gap.gap_ratio:.0%}</b></div>'
         for gap in gaps
     )
     st.markdown(
         '<div class="vip-profile-panel"><div class="vip-profile-panel-head">'
-        '<div><strong>分项战力缺口</strong><br><span>按分项占总战力比例，与同阶段 VIP 中位数比较</span></div>'
+        '<div><strong>分项战力缺口</strong><br><span>参照有效 VIP 榜单；优先同养成阶段，中位数比较，样本不足时逐级回退</span></div>'
         f'<span>{len(gaps)} 个明显缺口</span></div><div class="vip-profile-list">{rows}</div></div>',
         unsafe_allow_html=True,
     )
@@ -291,7 +427,8 @@ def _render_coverage_panel(st, insight: ProfileInsight) -> None:
     coverage = insight.coverage
     items = [
         ("充值节奏", coverage.recharge, "当前快照"),
-        ("礼包购买", coverage.purchases, "role_pay 明细"),
+        ("现金购买", coverage.cash_purchases, "role_pay 明细"),
+        ("龙币支付", coverage.dragon_coin_purchases, "Item 同秒关联"),
         ("分项战力", coverage.power, "玩家属性"),
     ]
     cards = "".join(
@@ -320,6 +457,50 @@ def _load_purchase_rows(db_path, workbook, role_id: str) -> pd.DataFrame:
     return pd.DataFrame([dict(row) for row in rows]) if rows else pd.DataFrame()
 
 
+def _load_price_tiers(st, db_path, workbook) -> dict[str, float]:
+    sheet_names = tuple(getattr(getattr(workbook, "report", None), "sheet_names", ()))
+    if db_path is None or not any(str(name).startswith("AE项目") for name in sheet_names):
+        return {}
+    repository = AEVIPSnapshotRepository(db_path)
+    latest_run = repository.get_latest_run(DEFAULT_AE_PROJECT_ID)
+    revision = str(latest_run["finished_at"] if latest_run else "")
+
+    @st.cache_data(show_spinner=False, ttl=600)
+    def _cached(path: str, source_revision: str) -> dict[str, float]:
+        del source_revision
+        all_rows = AEVIPSnapshotRepository(path).list_purchase_packages_by_channel(
+            DEFAULT_AE_PROJECT_ID,
+            "cash",
+        )
+        frame = pd.DataFrame([dict(row) for row in all_rows]) if all_rows else pd.DataFrame()
+        return infer_package_price_tiers(frame)
+
+    return _cached(str(db_path), revision)
+
+
+def _load_purchase_window_status(db_path, workbook) -> dict[str, str]:
+    sheet_names = tuple(getattr(getattr(workbook, "report", None), "sheet_names", ()))
+    if db_path is None or not any(str(name).startswith("AE项目") for name in sheet_names):
+        return {}
+    latest = AEVIPSnapshotRepository(db_path).get_latest_successful_run(
+        DEFAULT_AE_PROJECT_ID
+    )
+    if latest is None:
+        return {}
+    available_columns = set(latest.keys())
+    field_map = {
+        "lifetime": "purchase_lifetime_window",
+        "recent_7d": "purchase_7d_window",
+        "recent_14d": "purchase_14d_window",
+        "recent_30d": "purchase_recent_window",
+    }
+    return {
+        window_key: str(latest[field] or "")
+        for window_key, field in field_map.items()
+        if field in available_columns and latest[field]
+    }
+
+
 def render(st, workbook, db_path=None) -> None:
     _inject_styles(st)
     section(
@@ -332,7 +513,9 @@ def render(st, workbook, db_path=None) -> None:
     as_of_label = as_of.strftime("%Y/%m/%d %H:%M") if isinstance(as_of, datetime) else "当前数据源"
     st.markdown(
         f'<div class="vip-profile-context"><span>画像基准 <strong>{escape(as_of_label)}</strong></span>'
-        '<span>退款、撤销、礼包关闭、结算发起、库存与资源余额均不计入</span></div>',
+        '<span>战力参照：有效 VIP 榜单</span>'
+        '<span>礼包口径：礼包名定方向；标准档位 × 购买次数，现金与龙币同款合并</span>'
+        '<span>退款、撤销及非消费事件不计</span></div>',
         unsafe_allow_html=True,
     )
     player = _render_selector(st, workbook.active_df)
@@ -340,18 +523,21 @@ def render(st, workbook, db_path=None) -> None:
         return
     role_id = _safe_text(player.get("角色ID"), "")
     purchase_rows = _load_purchase_rows(db_path, workbook, role_id)
+    price_tiers = _load_price_tiers(st, db_path, workbook)
+    purchase_window_status = _load_purchase_window_status(db_path, workbook)
     insight = build_profile_insight(
         player,
         purchase_rows,
         workbook.active_df,
         as_of=as_of,
+        price_tiers=price_tiers,
     )
     _render_hero(st, player, insight, as_of)
     _render_metrics(st, player)
     _render_recommendations(st, insight)
     columns = st.columns([1.05, 0.95], gap="large")
     with columns[0]:
-        _render_purchase_panel(st, purchase_rows)
+        _render_purchase_panel(st, purchase_rows, price_tiers, purchase_window_status)
     with columns[1]:
         _render_power_gap_panel(st, insight)
     lower_columns = st.columns([1.05, 0.95], gap="large")

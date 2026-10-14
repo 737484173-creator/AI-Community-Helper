@@ -8,6 +8,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 16px;
     margin: 2px 0 12px;
     color: var(--text-tertiary);
@@ -226,8 +227,33 @@
     font-weight: 650;
     line-height: 1.2;
 }
+.vip-payment-channel {
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--primary-soft) 52%, var(--surface));
+    color: var(--primary);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 650;
+    line-height: 1.2;
+}
+.vip-payment-channel.dragon_coin {
+    border-color: color-mix(in srgb, var(--warning) 32%, var(--border));
+    background: color-mix(in srgb, var(--warning-soft) 64%, var(--surface));
+    color: var(--warning);
+}
+.vip-purchase-note {
+    padding: 10px 18px 12px;
+    border-top: 1px solid color-mix(in srgb, var(--warning) 22%, var(--border));
+    background: color-mix(in srgb, var(--warning-soft) 46%, var(--surface));
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.6;
+}
 .vip-purchase-row span, .vip-gap-row span { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: 11px; }
 .vip-purchase-row b, .vip-gap-row b { color: var(--text-primary); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vip-purchase-row b small { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: 9px; font-weight: 560; text-align: right; }
 .vip-gap-track i { background: var(--warning); }
 .vip-gap-row b { color: var(--warning); }
 @keyframes profile-bar-enter {
@@ -276,7 +302,7 @@
 .vip-profile-empty p { max-width: 420px; margin: 0; font-size: 12px; line-height: 1.7; text-wrap: pretty; }
 .vip-coverage {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
     padding: 14px 18px 18px;
 }

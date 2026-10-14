@@ -257,6 +257,10 @@ CREATE TABLE IF NOT EXISTS vip_purchase_packages (
     category TEXT NOT NULL,
     purchase_count INTEGER NOT NULL DEFAULT 0,
     payment_amount REAL NOT NULL DEFAULT 0,
+    payment_channel TEXT NOT NULL DEFAULT 'cash',
+    currency_name TEXT NOT NULL DEFAULT '美元',
+    source_event TEXT NOT NULL DEFAULT 'role_pay',
+    is_demand_evidence INTEGER NOT NULL DEFAULT 1,
     items_json TEXT NOT NULL DEFAULT '[]',
     synced_at TEXT NOT NULL,
     PRIMARY KEY(project_id, role_id, window_key, giftbox_id)
@@ -277,6 +281,8 @@ CREATE TABLE IF NOT EXISTS vip_ae_sync_runs (
     purchase_source_row_count INTEGER NOT NULL DEFAULT 0,
     purchase_vip_package_count INTEGER NOT NULL DEFAULT 0,
     purchase_lifetime_window TEXT,
+    purchase_7d_window TEXT,
+    purchase_14d_window TEXT,
     purchase_recent_window TEXT,
     error_message TEXT
 );

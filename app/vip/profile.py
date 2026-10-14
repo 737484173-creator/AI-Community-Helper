@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import math
+import re
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
+from app.vip.item_catalog import classify_consumption_category, load_giftbox_name_overrides
 from app.vip.server_merges import canonical_server_id, normalize_server_id
 
 
@@ -57,16 +61,28 @@ class ServerStage:
 @dataclass(frozen=True)
 class ProfileCoverage:
     recharge: bool
-    purchases: bool
+    cash_purchases: bool
+    dragon_coin_purchases: bool
     power: bool
 
     @property
+    def purchases(self) -> bool:
+        return self.cash_purchases or self.dragon_coin_purchases
+
+    @property
     def available_count(self) -> int:
-        return sum((self.recharge, self.purchases, self.power))
+        return sum(
+            (
+                self.recharge,
+                self.cash_purchases,
+                self.dragon_coin_purchases,
+                self.power,
+            )
+        )
 
     @property
     def total_count(self) -> int:
-        return 3
+        return 4
 
     @property
     def ratio(self) -> float:
@@ -82,6 +98,7 @@ class PowerGap:
     peer_median_share: float
     gap_ratio: float
     peer_count: int
+    peer_basis: str
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,10 @@ class DemandSignal:
     score: float
     recent_amount: float
     lifetime_amount: float
+    recent_cash_amount: float
+    recent_dragon_coin_amount: float
+    lifetime_cash_amount: float
+    lifetime_dragon_coin_amount: float
     purchase_count: int
     recent_share: float
     lifetime_share: float
@@ -174,8 +195,19 @@ def profile_coverage(player: pd.Series, purchase_rows: pd.DataFrame | None = Non
         if field in player.index and pd.notna(player.get(field))
     ]
     power = len(power_values) >= 3 and any(value > 0 for value in power_values)
-    purchases = purchase_rows is not None and not purchase_rows.empty
-    return ProfileCoverage(recharge=recharge, purchases=purchases, power=power)
+    cash_purchases = False
+    dragon_coin_purchases = False
+    if purchase_rows is not None and not purchase_rows.empty:
+        normalized = normalize_purchase_rows(purchase_rows)
+        evidence = normalized[normalized["is_demand_evidence"]]
+        cash_purchases = evidence["payment_channel"].eq("cash").any()
+        dragon_coin_purchases = evidence["payment_channel"].eq("dragon_coin").any()
+    return ProfileCoverage(
+        recharge=recharge,
+        cash_purchases=bool(cash_purchases),
+        dragon_coin_purchases=bool(dragon_coin_purchases),
+        power=power,
+    )
 
 
 def payment_direction(player: pd.Series) -> tuple[str, str]:
@@ -224,7 +256,7 @@ def recommendation_state(
         )
         return (
             primary.category,
-            f"需求方向指数 {primary.score:.0f}；近 30 日实付 {primary.recent_amount:,.2f}。{gap_copy}",
+            f"需求方向指数 {primary.score:.0f}；{_signal_recent_copy(primary)}。{gap_copy}",
             "ready",
         )
     return ("画像证据已具备", "购买偏好与分项战力均可用于计算需求方向。", "ready")
@@ -236,25 +268,21 @@ def build_profile_insight(
     cohort: pd.DataFrame,
     *,
     as_of: datetime | date | None = None,
+    price_tiers: Mapping[str, float] | None = None,
 ) -> ProfileInsight:
     coverage = profile_coverage(player, purchase_rows)
     gaps = tuple(calculate_power_gaps(player, cohort, as_of=as_of)) if coverage.power else ()
     if not coverage.purchases or not coverage.power or purchase_rows is None:
         return ProfileInsight(coverage, (), gaps, "证据不足")
 
-    purchases = _purchase_category_summary(purchase_rows)
+    purchases = normalize_purchase_rows(purchase_rows, price_tiers=price_tiers)
+    purchases = purchases[purchases["is_demand_evidence"]].copy()
     if purchases.empty:
         return ProfileInsight(coverage, (), gaps, "证据不足")
     gap_by_field = {gap.field: gap for gap in gaps}
-    recent_total = float(
-        purchases.loc[purchases["window_key"].eq("recent_30d"), "payment_amount"].sum()
-    )
-    lifetime_total = float(
-        purchases.loc[purchases["window_key"].eq("lifetime"), "payment_amount"].sum()
-    )
-    lifetime_count = float(
-        purchases.loc[purchases["window_key"].eq("lifetime"), "purchase_count"].sum()
-    )
+    recent_total = _window_total(purchases, "recent_30d", "tier_spend")
+    lifetime_total = _window_total(purchases, "lifetime", "tier_spend")
+    lifetime_count = _window_total(purchases, "lifetime", "purchase_count")
     categories = set(purchases["category"].astype(str))
     categories.update(
         category
@@ -266,12 +294,12 @@ def build_profile_insight(
         category_rows = purchases[purchases["category"].eq(category)]
         recent_rows = category_rows[category_rows["window_key"].eq("recent_30d")]
         lifetime_rows = category_rows[category_rows["window_key"].eq("lifetime")]
-        recent_amount = float(recent_rows["payment_amount"].sum())
-        lifetime_amount = float(lifetime_rows["payment_amount"].sum())
+        recent_amount = float(recent_rows["tier_spend"].sum())
+        lifetime_amount = float(lifetime_rows["tier_spend"].sum())
         purchase_count = int(round(float(lifetime_rows["purchase_count"].sum())))
-        recent_share = recent_amount / recent_total if recent_total > 0 else 0.0
-        lifetime_share = lifetime_amount / lifetime_total if lifetime_total > 0 else 0.0
-        count_share = purchase_count / lifetime_count if lifetime_count > 0 else 0.0
+        recent_share = _share(recent_rows, recent_total, "tier_spend")
+        lifetime_share = _share(lifetime_rows, lifetime_total, "tier_spend")
+        count_share = _share(lifetime_rows, lifetime_count, "purchase_count")
         purchase_score = 0.55 * recent_share + 0.25 * lifetime_share + 0.20 * count_share
         power_field = POWER_FIELD_CATEGORIES.get(category)
         gap_ratio = gap_by_field.get(power_field).gap_ratio if power_field in gap_by_field else 0.0
@@ -289,6 +317,10 @@ def build_profile_insight(
                 score=round(score, 1),
                 recent_amount=recent_amount,
                 lifetime_amount=lifetime_amount,
+                recent_cash_amount=_channel_amount(recent_rows, "cash"),
+                recent_dragon_coin_amount=_channel_amount(recent_rows, "dragon_coin"),
+                lifetime_cash_amount=_channel_amount(lifetime_rows, "cash"),
+                lifetime_dragon_coin_amount=_channel_amount(lifetime_rows, "dragon_coin"),
                 purchase_count=purchase_count,
                 recent_share=recent_share,
                 lifetime_share=lifetime_share,
@@ -334,11 +366,14 @@ def calculate_power_gaps(
     peer_frame = eligible[
         eligible["区服"].map(lambda value: _stage_bucket(value, as_of=as_of)).eq(target_bucket)
     ].copy()
+    peer_basis = "同养成阶段 VIP"
     if len(peer_frame) < 5 and "服务器类型" in eligible.columns:
         server_type = str(player.get("服务器类型") or "")
         peer_frame = eligible[eligible["服务器类型"].astype(str).eq(server_type)].copy()
+        peer_basis = "同服务器类型 VIP"
     if len(peer_frame) < 5:
         peer_frame = eligible.copy()
+        peer_basis = "全部有效 VIP"
 
     component_fields = tuple(field for field in POWER_FIELDS if field != "cur_fp")
     peer_denominators = peer_frame.apply(_power_denominator, axis=1)
@@ -375,13 +410,19 @@ def calculate_power_gaps(
                 peer_median_share=median_share,
                 gap_ratio=gap_ratio,
                 peer_count=int(len(positive)),
+                peer_basis=peer_basis,
             )
         )
     output.sort(key=lambda gap: (-gap.gap_ratio, gap.label))
     return output
 
 
-def _purchase_category_summary(rows: pd.DataFrame) -> pd.DataFrame:
+def normalize_purchase_rows(
+    rows: pd.DataFrame,
+    *,
+    price_tiers: Mapping[str, float] | None = None,
+) -> pd.DataFrame:
+    """Normalize cached and newly synced purchase rows to one evidence contract."""
     output = rows.copy()
     defaults: dict[str, object] = {
         "window_key": "",
@@ -390,6 +431,9 @@ def _purchase_category_summary(rows: pd.DataFrame) -> pd.DataFrame:
         "purchase_count": 0,
         "payment_amount": 0.0,
         "items_json": "[]",
+        "payment_channel": "cash",
+        "currency_name": "美元",
+        "is_demand_evidence": True,
     }
     for column, default in defaults.items():
         if column not in output.columns:
@@ -397,7 +441,168 @@ def _purchase_category_summary(rows: pd.DataFrame) -> pd.DataFrame:
     output["purchase_count"] = pd.to_numeric(output["purchase_count"], errors="coerce").fillna(0)
     output["payment_amount"] = pd.to_numeric(output["payment_amount"], errors="coerce").fillna(0.0)
     output["category"] = output["category"].fillna("其他").astype(str)
+    output["payment_channel"] = output["payment_channel"].fillna("cash").astype(str)
+    output["is_demand_evidence"] = output["is_demand_evidence"].map(_truthy)
+    resolved_names = output.apply(
+        lambda row: giftbox_display_name(
+            row.get("giftbox_name"),
+            row.get("giftbox_id"),
+        )[0],
+        axis=1,
+    )
+    output["giftbox_name"] = resolved_names
+    # Recompute cached rows as well as newly synced rows so a legacy item-based
+    # classification cannot keep influencing the current demand judgement.
+    output["category"] = resolved_names.map(classify_consumption_category)
+    dragon_coin_funding = (
+        output["payment_channel"].eq("cash")
+        & resolved_names.str.fullmatch(r"龙币(?:\s*×\s*[\d,]+)?", na=False)
+    )
+    output.loc[dragon_coin_funding, "category"] = "龙币充值"
+    output.loc[dragon_coin_funding, "is_demand_evidence"] = False
+    tier_values: list[float] = []
+    tier_sources: list[str] = []
+    for _, row in output.iterrows():
+        tier = _mapped_price_tier(row, price_tiers or {})
+        source = "VIP榜单同礼包众数"
+        if tier <= 0 and str(row.get("payment_channel") or "cash") == "cash":
+            count = float(row.get("purchase_count") or 0)
+            amount = float(row.get("payment_amount") or 0)
+            tier = round(amount / count, 2) if count > 0 and amount > 0 else 0.0
+            source = "当前记录均价"
+        if tier <= 0:
+            source = "档位待匹配"
+        tier_values.append(tier)
+        tier_sources.append(source)
+    output["price_tier"] = tier_values
+    output["price_tier_source"] = tier_sources
+    output["tier_spend"] = output["price_tier"] * output["purchase_count"]
     return output
+
+
+def infer_package_price_tiers(rows: pd.DataFrame) -> dict[str, float]:
+    """Infer nominal USD tiers from the same packages across the VIP cohort.
+
+    The AE USD aggregate reflects settlement currency conversion and can drift.
+    Exact ``x.99`` observations reveal the store's nominal package tier; the
+    modal tier across VIP buyers is therefore used for every payment method.
+    """
+    if rows.empty:
+        return {}
+    normalized = rows.copy()
+    for column, default in {
+        "giftbox_id": "",
+        "giftbox_name": "",
+        "payment_channel": "cash",
+        "window_key": "lifetime",
+        "purchase_count": 0,
+        "payment_amount": 0.0,
+        "is_demand_evidence": True,
+    }.items():
+        if column not in normalized.columns:
+            normalized[column] = default
+    normalized["purchase_count"] = pd.to_numeric(
+        normalized["purchase_count"], errors="coerce"
+    ).fillna(0)
+    normalized["payment_amount"] = pd.to_numeric(
+        normalized["payment_amount"], errors="coerce"
+    ).fillna(0.0)
+    normalized = normalized[
+        normalized["payment_channel"].astype(str).eq("cash")
+        & normalized["window_key"].astype(str).eq("lifetime")
+        & normalized["is_demand_evidence"].map(_truthy)
+        & normalized["purchase_count"].gt(0)
+        & normalized["payment_amount"].gt(0)
+    ]
+    votes: dict[str, Counter[float]] = defaultdict(Counter)
+    keys_by_name: dict[str, set[str]] = defaultdict(set)
+    for _, row in normalized.iterrows():
+        unit_price = round(
+            float(row["payment_amount"]) / float(row["purchase_count"]),
+            2,
+        )
+        if not _looks_like_nominal_tier(unit_price):
+            continue
+        keys = _package_price_keys(row)
+        if not keys:
+            continue
+        primary_key = keys[0]
+        votes[primary_key][unit_price] += 1
+        name_key = next((key for key in keys if key.startswith("name:")), "")
+        if name_key:
+            keys_by_name[name_key].add(primary_key)
+    inferred = {
+        key: sorted(counter.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        for key, counter in votes.items()
+        if counter
+    }
+    # Name-only fallback is safe only when every package ID carrying that name
+    # resolves to the same tier. Reused generic names therefore stay unmapped.
+    for name_key, primary_keys in keys_by_name.items():
+        candidate_tiers = {inferred[key] for key in primary_keys if key in inferred}
+        if len(candidate_tiers) == 1:
+            inferred[name_key] = next(iter(candidate_tiers))
+    return inferred
+
+
+def _looks_like_nominal_tier(value: float) -> bool:
+    if not math.isfinite(value) or value <= 0:
+        return False
+    return abs((value - math.floor(value)) - 0.99) <= 0.011
+
+
+def _base_package_id(value: object) -> str:
+    identifier = str(value or "").strip()
+    if identifier.startswith("dragon_coin:"):
+        identifier = identifier.removeprefix("dragon_coin:")
+    return identifier.split("::", 1)[0]
+
+
+def _package_price_keys(row: pd.Series | Mapping[str, object]) -> tuple[str, ...]:
+    identifier = _base_package_id(row.get("giftbox_id"))
+    name, _ = giftbox_display_name(row.get("giftbox_name"), row.get("giftbox_id"))
+    normalized_name = re.sub(r"\s+", "", name).casefold()
+    keys: list[str] = []
+    if identifier and normalized_name:
+        keys.append(f"id-name:{identifier}|{normalized_name}")
+    if normalized_name:
+        keys.append(f"name:{normalized_name}")
+    return tuple(keys)
+
+
+def _mapped_price_tier(
+    row: pd.Series | Mapping[str, object],
+    price_tiers: Mapping[str, float],
+) -> float:
+    for key in _package_price_keys(row):
+        value = float(price_tiers.get(key, 0) or 0)
+        if value > 0:
+            return value
+    return 0.0
+
+
+def _window_total(rows: pd.DataFrame, window_key: str, value_column: str) -> float:
+    return float(rows.loc[rows["window_key"].eq(window_key), value_column].sum())
+
+
+def _share(rows: pd.DataFrame, total: float, value_column: str) -> float:
+    return float(rows[value_column].sum()) / total if total > 0 else 0.0
+
+
+def _channel_amount(rows: pd.DataFrame, channel: str) -> float:
+    return float(rows.loc[rows["payment_channel"].eq(channel), "payment_amount"].sum())
+
+
+def _signal_recent_copy(signal: DemandSignal) -> str:
+    if signal.recent_amount > 0:
+        return f"近 30 日档位累计 {signal.recent_amount:,.2f} 美元"
+    return "近 30 日暂无该方向消费"
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() not in {"", "0", "false", "no", "none", "null"}
+    return bool(value)
 
 
 def _category_examples(rows: pd.DataFrame) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -440,11 +645,24 @@ def giftbox_display_name(
     giftbox_id: object,
 ) -> tuple[str, bool]:
     name = str(giftbox_name or "").strip()
+    identifier = str(giftbox_id or "").strip().split("::", 1)[0]
     missing = not name or name == "未命名礼包" or name.endswith("（名称待补充）")
+    if missing and identifier:
+        verified_name = load_giftbox_name_overrides().get(identifier, "")
+        if verified_name:
+            name = verified_name
+            missing = False
+    dragon_coin_match = re.search(
+        r"Dragon\s*Coin\s*[*×x]?\s*([\d,]+)?",
+        name,
+        flags=re.IGNORECASE,
+    )
+    if dragon_coin_match:
+        amount = str(dragon_coin_match.group(1) or "").replace(",", "")
+        return (f"龙币 × {amount}" if amount else "龙币"), False
     if not missing:
         return name, False
 
-    identifier = str(giftbox_id or "").strip().split("::", 1)[0]
     if identifier and not identifier.startswith("name:"):
         return f"礼包 ID {identifier}", True
     return "礼包名称待补充", True

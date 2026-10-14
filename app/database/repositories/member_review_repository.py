@@ -165,6 +165,17 @@ class MemberReviewRepository(BaseRepository):
     def get(self, application_id: int) -> sqlite3.Row | None:
         return self._fetch_one("SELECT * FROM member_applications WHERE id = ?", (application_id,))
 
+    def get_latest_by_discord_user_id(self, discord_user_id: str) -> sqlite3.Row | None:
+        return self._fetch_one(
+            """
+            SELECT * FROM member_applications
+            WHERE discord_user_id = ?
+            ORDER BY created_time DESC, id DESC
+            LIMIT 1
+            """,
+            (discord_user_id,),
+        )
+
     def counts(self) -> dict[str, int]:
         rows = self._fetch_all(
             """

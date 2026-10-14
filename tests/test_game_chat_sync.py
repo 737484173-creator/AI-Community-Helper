@@ -64,6 +64,24 @@ def test_build_game_chat_rows_applies_shared_risk_rules_and_scope() -> None:
     assert rows[0]["risk_reason"] == "强烈负面表达"
 
 
+def test_new_s25_merge_is_applied_to_game_chat_sync() -> None:
+    rows = build_game_chat_rows(
+        [
+            {
+                "#event_time": "2026-09-18 10:00:00.000",
+                "role_id": "role-1",
+                "server_id": "27",
+                "server_name": "S27",
+                "chat_content": "hello",
+                "chat_type": "发言",
+            }
+        ],
+        active_role_ids=["role-1"],
+    )
+
+    assert [(row["server_id"], row["server_name"]) for row in rows] == [("25", "S25")]
+
+
 def test_event_detail_artifact_accepts_ae_display_name_headers(tmp_path) -> None:
     artifact = tmp_path / "game-chat.csv.gz"
     payload = (

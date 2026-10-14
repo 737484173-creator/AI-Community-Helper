@@ -198,6 +198,61 @@ function Get-AidcPidFile {
     return Join-Path (Get-AidcLogDirectory -Settings $Settings) $Settings.PidFileName
 }
 
+function Write-AidcPidFileSafely {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Record
+    )
+
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $temporaryPath = Join-Path $directory (".{0}.{1}.tmp" -f ([System.IO.Path]::GetFileName($Path)), [guid]::NewGuid().ToString("N"))
+    try {
+        $Record | ConvertTo-Json | Set-Content -LiteralPath $temporaryPath -Encoding UTF8 -ErrorAction Stop
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force -ErrorAction Stop
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-AidcPidFileSafely {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Nullable[int]]$ExpectedProcessId
+    )
+
+    try {
+        if ($PSBoundParameters.ContainsKey("ExpectedProcessId")) {
+            $record = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if (-not ($record.PSObject.Properties.Name -contains "ProcessId")) {
+                throw "PID file does not contain ProcessId: $Path"
+            }
+            if ([int]$record.ProcessId -ne [int]$ExpectedProcessId) {
+                return $false
+            }
+        }
+
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return $true
+    }
+    catch {
+        # Stop/restart controls and the supervisor may race to remove the same
+        # PID file. A file that is already gone is the desired end state.
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return $true
+        }
+        throw
+    }
+}
+
 function Get-AidcLocalHealthUri {
     param([hashtable]$Settings = (Get-AidcSettings))
 

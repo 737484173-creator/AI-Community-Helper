@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from app.database.db import db_session
 from app.database.repositories.base_repository import BaseRepository
+from app.vip.server_merges import current_server_merge_map, normalize_server_id
 
 
 class GameChatRepository(BaseRepository):
@@ -125,7 +126,7 @@ class GameChatRepository(BaseRepository):
         *,
         server_ids: Sequence[str] = (),
         risk_only: bool = False,
-    ) -> list[sqlite3.Row]:
+    ) -> list[dict[str, object]]:
         conditions = [
             "project_id = ?",
             "event_time >= ?",
@@ -136,7 +137,16 @@ class GameChatRepository(BaseRepository):
             _day_start(range_start),
             _day_end(range_end),
         ]
-        cleaned_servers = tuple(str(value) for value in server_ids if str(value).strip())
+        merge_map = current_server_merge_map()
+        selected_servers = {
+            merge_map.get(normalized, normalized)
+            for value in server_ids
+            if (normalized := normalize_server_id(value))
+        }
+        cleaned_servers = tuple(sorted(
+            selected_servers
+            | {source for source, primary in merge_map.items() if primary in selected_servers}
+        ))
         if cleaned_servers:
             placeholders = ", ".join("?" for _ in cleaned_servers)
             conditions.append(f"server_id IN ({placeholders})")
@@ -144,7 +154,7 @@ class GameChatRepository(BaseRepository):
         if risk_only:
             conditions.append("risk_level IS NOT NULL")
 
-        return self._fetch_all(
+        rows = self._fetch_all(
             f"""
             SELECT *
             FROM game_chat_messages
@@ -153,14 +163,24 @@ class GameChatRepository(BaseRepository):
             """,
             tuple(params),
         )
+        result = []
+        for row in rows:
+            item = dict(row)
+            source = normalize_server_id(item["server_id"])
+            primary = merge_map.get(source, source)
+            if primary != source:
+                item["server_id"] = primary
+                item["server_name"] = f"S{primary}" if primary.isdigit() else primary
+            result.append(item)
+        return result
 
     def list_servers(
         self,
         project_id: int,
         range_start: str,
         range_end: str,
-    ) -> list[sqlite3.Row]:
-        return self._fetch_all(
+    ) -> list[dict[str, object]]:
+        rows = self._fetch_all(
             """
             SELECT server_id, MAX(server_name) AS server_name, COUNT(*) AS message_count
             FROM game_chat_messages
@@ -172,6 +192,24 @@ class GameChatRepository(BaseRepository):
             ORDER BY CAST(server_id AS INTEGER), server_id
             """,
             (project_id, _day_start(range_start), _day_end(range_end)),
+        )
+        merge_map = current_server_merge_map()
+        totals: dict[str, dict[str, object]] = {}
+        for row in rows:
+            source = normalize_server_id(row["server_id"])
+            primary = merge_map.get(source, source)
+            if primary not in totals:
+                totals[primary] = {
+                    "server_id": primary,
+                    "server_name": f"S{primary}" if primary.isdigit() else row["server_name"],
+                    "message_count": 0,
+                }
+            totals[primary]["message_count"] += int(row["message_count"])
+        return sorted(
+            totals.values(),
+            key=lambda row: (0, int(row["server_id"]))
+            if str(row["server_id"]).isdigit()
+            else (1, str(row["server_id"])),
         )
 
     def get_latest_run(self, project_id: int) -> sqlite3.Row | None:

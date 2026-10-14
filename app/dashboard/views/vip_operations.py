@@ -13,8 +13,9 @@ from app.dashboard.views.vip_common import (
     compact_multiselect_filter,
     section,
 )
+from app.dashboard.views import vip_profile
 from app.vip.ae_sync import AEVIPSyncError, AEVIPSyncService, DEFAULT_AE_PROJECT_ID
-from app.vip.server_merges import server_merge_summary
+from app.vip.server_merges import server_merge_config_revision, server_merge_summary
 from app.vip.service import (
     CONTACT_PRIORITIES,
     DEFAULT_VIP_FILE,
@@ -30,32 +31,35 @@ from app.vip.service import (
 )
 
 
-VIP_WORKBOOK_CACHE_VERSION = "vip-rules-2026-09-10-v3"
+VIP_WORKBOOK_CACHE_VERSION = "vip-rules-2026-09-17-profile-v1"
 
 def _load_uploaded_workbook(st, file_name: str, file_bytes: bytes):
     @st.cache_data(show_spinner=False)
-    def _cached_uploaded_workbook(name: str, payload: bytes):
+    def _cached_uploaded_workbook(name: str, payload: bytes, merge_revision: tuple[int, int]):
+        del merge_revision
         source = BytesIO(payload)
         source.name = name
         return load_vip_workbook(source)
 
-    return _cached_uploaded_workbook(file_name, file_bytes)
+    return _cached_uploaded_workbook(file_name, file_bytes, server_merge_config_revision())
 
 
 def _load_default_workbook(st, path: str, fingerprint: tuple[int, int]):
     @st.cache_data(show_spinner=False)
-    def _cached_default_workbook(file_path: str, source_fingerprint: tuple[int, int], rules_version: str):
+    def _cached_default_workbook(file_path: str, source_fingerprint: tuple[int, int], rules_version: str, merge_revision: tuple[int, int]):
+        del source_fingerprint, rules_version, merge_revision
         return load_vip_workbook(DEFAULT_VIP_FILE.__class__(file_path))
 
-    return _cached_default_workbook(path, fingerprint, VIP_WORKBOOK_CACHE_VERSION)
+    return _cached_default_workbook(path, fingerprint, VIP_WORKBOOK_CACHE_VERSION, server_merge_config_revision())
 
 
 def _load_ae_workbook(st, db_path: str, snapshot_revision: tuple[int, str]):
     @st.cache_data(show_spinner=False)
-    def _cached_ae_workbook(path: str, source_revision: tuple[int, str], rules_version: str):
+    def _cached_ae_workbook(path: str, source_revision: tuple[int, str], rules_version: str, merge_revision: tuple[int, int]):
+        del source_revision, rules_version, merge_revision
         return load_ae_vip_workbook(Path(path), DEFAULT_AE_PROJECT_ID)
 
-    return _cached_ae_workbook(db_path, snapshot_revision, VIP_WORKBOOK_CACHE_VERSION)
+    return _cached_ae_workbook(db_path, snapshot_revision, VIP_WORKBOOK_CACHE_VERSION, server_merge_config_revision())
 
 
 def _file_fingerprint(path: str | Path) -> tuple[int, int]:
@@ -817,8 +821,11 @@ def _render_data_source(st, db_path) -> None:
                 latest_run = AEVIPSnapshotRepository(db_path).get_latest_run(DEFAULT_AE_PROJECT_ID)
                 st.success(
                     f"同步完成：{result.vip_row_count} 名 VIP；近七日窗口 {result.weekly_window}；"
-                    f"前七日对比 {result.previous_week_window}；28 日基准 {result.rolling_28d_window}。"
+                    f"前七日对比 {result.previous_week_window}；28 日基准 {result.rolling_28d_window}；"
+                    f"画像礼包 {result.purchase_package_count:,} 条。"
                 )
+                if result.dragon_coin_warning:
+                    st.warning(result.dragon_coin_warning)
             except AEVIPSyncError as exc:
                 st.error(f"AE 同步失败：{exc}")
         uploaded_file = st.file_uploader(
@@ -1181,6 +1188,28 @@ def _render_player_export(st, dataframe: pd.DataFrame, total_count: int) -> None
 def render(st, db_path) -> None:
     _vip_overview_css(st)
     st.session_state.setdefault("vip_upload_widget_version", 0)
+    with st.container(key="vip_operations_subpage"):
+        subpage = st.segmented_control(
+            "VIP 运营子页",
+            options=("运营总览", "用户画像"),
+            default="运营总览",
+            key="vip_operations_subpage_choice",
+            label_visibility="collapsed",
+        )
+
+    if subpage == "用户画像":
+        source = _current_source(st, db_path)
+        if source is None:
+            st.warning("请先在“运营总览”中同步 AE 项目 24，或上传一个 .xlsx 回退文件。")
+            return
+        try:
+            workbook = load_current_workbook(st, db_path)
+        except Exception as exc:
+            st.error(f"处理失败：{exc}")
+            return
+        vip_profile.render(st, workbook, db_path)
+        return
+
     _render_data_source(st, db_path)
     source = _current_source(st, db_path)
     if source is None:

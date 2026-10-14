@@ -234,8 +234,36 @@ CREATE TABLE IF NOT EXISTS vip_ae_snapshots (
     cps_group TEXT,
     server_type TEXT NOT NULL,
     user_source TEXT NOT NULL,
+    build_fp REAL,
+    tech_fp REAL,
+    soldier_fp REAL,
+    beast_fp REAL,
+    hero_fp REAL,
+    hiryu_fp REAL,
+    com_fp REAL,
+    leg_tech_fp REAL,
+    cur_fp REAL,
     synced_at TEXT NOT NULL,
     PRIMARY KEY(project_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS vip_purchase_packages (
+    project_id INTEGER NOT NULL,
+    role_id TEXT NOT NULL,
+    window_key TEXT NOT NULL,
+    window_label TEXT,
+    giftbox_id TEXT NOT NULL,
+    giftbox_name TEXT,
+    category TEXT NOT NULL,
+    purchase_count INTEGER NOT NULL DEFAULT 0,
+    payment_amount REAL NOT NULL DEFAULT 0,
+    payment_channel TEXT NOT NULL DEFAULT 'cash',
+    currency_name TEXT NOT NULL DEFAULT '美元',
+    source_event TEXT NOT NULL DEFAULT 'role_pay',
+    is_demand_evidence INTEGER NOT NULL DEFAULT 1,
+    items_json TEXT NOT NULL DEFAULT '[]',
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, role_id, window_key, giftbox_id)
 );
 
 CREATE TABLE IF NOT EXISTS vip_ae_sync_runs (
@@ -250,6 +278,12 @@ CREATE TABLE IF NOT EXISTS vip_ae_sync_runs (
     weekly_window TEXT,
     previous_week_window TEXT,
     rolling_28d_window TEXT,
+    purchase_source_row_count INTEGER NOT NULL DEFAULT 0,
+    purchase_vip_package_count INTEGER NOT NULL DEFAULT 0,
+    purchase_lifetime_window TEXT,
+    purchase_7d_window TEXT,
+    purchase_14d_window TEXT,
+    purchase_recent_window TEXT,
     error_message TEXT
 );
 
@@ -306,6 +340,8 @@ CREATE INDEX IF NOT EXISTS idx_vip_ae_snapshots_total_payment
     ON vip_ae_snapshots(project_id, total_payment_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_vip_ae_sync_runs_project_time
     ON vip_ae_sync_runs(project_id, finished_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_vip_purchase_packages_role_window
+    ON vip_purchase_packages(project_id, role_id, window_key, payment_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_game_chat_messages_project_time
     ON game_chat_messages(project_id, event_time DESC);
 CREATE INDEX IF NOT EXISTS idx_game_chat_messages_project_server_time

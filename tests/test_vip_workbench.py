@@ -17,7 +17,8 @@ from app.vip.service import (
     vip_summary_metrics,
     VIPWorkbook,
 )
-from app.vip.server_merges import canonical_server_id
+from app.vip.profile import server_stage
+from app.vip.server_merges import apply_server_merges, canonical_server_id, server_merge_summary
 from app.vip.utils.excel_reader import (
     ExcelReadReport,
     _infer_server_type,
@@ -128,6 +129,9 @@ def test_server_merge_groups_resolve_to_current_primary_server() -> None:
         "22": "23",
         "23": "23",
         "24": "23",
+        "25": "25",
+        "26": "25",
+        "27": "25",
         "28": "28",
         "29": "28",
         "30": "28",
@@ -141,6 +145,15 @@ def test_server_merge_groups_resolve_to_current_primary_server() -> None:
 
     for source, primary in expected.items():
         assert canonical_server_id(f"S{source}") == primary
+
+
+def test_s25_merge_retains_source_and_effective_date() -> None:
+    merged = apply_server_merges(pd.DataFrame({"区服": ["S25", "S26", "S27"]}))
+
+    assert merged["区服"].tolist() == ["25", "25", "25"]
+    assert merged["原区服"].tolist() == ["25", "26", "27"]
+    assert "S25（S25 / S26 / S27；2026-09-18 生效）" in server_merge_summary()
+    assert server_stage("S26", as_of=datetime(2026, 9, 20)).server_id == "25"
 
 
 def test_workbook_canonicalizes_merged_servers_before_scoring() -> None:

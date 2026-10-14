@@ -1,0 +1,32 @@
+{
+  "version": "new-server-days",
+  "applies_from_server": 11,
+  "paths": [
+    {"name": "城建", "unlock_day": 1, "power_field": "build_fp", "requirement": "指挥中心 1 级"},
+    {"name": "科研", "unlock_day": 1, "power_field": "tech_fp", "requirement": "指挥中心 6 级并建造研究所"},
+    {"name": "士兵", "unlock_day": 1, "power_field": "soldier_fp", "requirement": "指挥中心 2 级并建造兵营"},
+    {"name": "巨兽", "unlock_day": 1, "power_field": "beast_fp", "requirement": "巨兽中心 1 级"},
+    {"name": "巨兽机甲", "unlock_day": 1, "power_field": "beast_fp", "requirement": "指挥中心 6 级并建造锻造厂"},
+    {"name": "装备强化/升星", "unlock_day": 1, "power_field": null, "requirement": "指挥中心 16 级且装备达到蓝色品质"},
+    {"name": "装备洗练", "unlock_day": 1, "power_field": null, "requirement": "指挥中心 16 级且装备达到蓝色品质"},
+    {"name": "徽章强化/升星", "unlock_day": 1, "power_field": null, "requirement": "指挥中心 25 级"},
+    {"name": "飞龙升星/升级", "unlock_day": 21, "power_field": "hiryu_fp", "requirement": "指挥中心 15 级且世界进程达到 21 天"},
+    {"name": "统帅府", "unlock_day": 28, "power_field": "com_fp", "requirement": "指挥中心 1 级"},
+    {"name": "巨兽基因", "unlock_day": 60, "power_field": "beast_fp", "requirement": "研究所 18 级"},
+    {"name": "飞龙龙鳞", "unlock_day": 70, "power_field": "hiryu_fp", "requirement": "飞龙巢穴 10 级"},
+    {"name": "龙鳞升星", "unlock_day": null, "power_field": "hiryu_fp", "requirement": "橙色龙鳞且强化 5 级以上"},
+    {"name": "飞龙翼装", "unlock_day": 90, "power_field": "hiryu_fp", "requirement": "开服第 90 天"},
+    {"name": "超导建筑", "unlock_day": 90, "power_field": "build_fp", "requirement": "开服第 90 天"},
+    {"name": "巨兽源晶", "unlock_day": 151, "power_field": "beast_fp", "requirement": "巨兽达到 90 级"},
+    {"name": "神兽-玄武", "unlock_day": 180, "power_field": "beast_fp", "requirement": "指挥中心 31 级"},
+    {"name": "神兽-玄武血脉", "unlock_day": 180, "power_field": "beast_fp", "requirement": "开服第 180 天"},
+    {"name": "超导改造", "unlock_day": 181, "power_field": null, "requirement": "当前版本暂无该功能", "available": false},
+    {"name": "超导科技", "unlock_day": 240, "power_field": "tech_fp", "requirement": "指挥中心 31 级并建造超导中心"},
+    {"name": "神兽-白虎", "unlock_day": 240, "power_field": "beast_fp", "requirement": "开服第 240 天"},
+    {"name": "天启-机体&武器", "unlock_day": 240, "power_field": null, "requirement": "开服第 240 天"},
+    {"name": "天启-翼装", "unlock_day": 270, "power_field": null, "requirement": "开服第 270 天"},
+    {"name": "神兽-朱雀", "unlock_day": 300, "power_field": "beast_fp", "requirement": "开服第 300 天"},
+    {"name": "神兽-青龙", "unlock_day": 360, "power_field": "beast_fp", "requirement": "开服第 360 天"},
+    {"name": "徽章改造", "unlock_day": null, "power_field": null, "requirement": "需满足徽章前置条件"}
+  ]
+}

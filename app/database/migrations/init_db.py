@@ -40,7 +40,6 @@ def _apply_lightweight_migrations(connection) -> None:
           )
         """
     )
-
     message_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(messages)").fetchall()
     }
@@ -162,6 +161,21 @@ def _apply_lightweight_migrations(connection) -> None:
         connection.execute(
             "ALTER TABLE vip_ae_snapshots ADD COLUMN payment_28d_weekly_avg REAL"
         )
+    for column_name in (
+        "build_fp",
+        "tech_fp",
+        "soldier_fp",
+        "beast_fp",
+        "hero_fp",
+        "hiryu_fp",
+        "com_fp",
+        "leg_tech_fp",
+        "cur_fp",
+    ):
+        if column_name not in vip_snapshot_columns:
+            connection.execute(
+                f"ALTER TABLE vip_ae_snapshots ADD COLUMN {column_name} REAL"
+            )
 
     vip_sync_run_columns = {
         row["name"]
@@ -174,6 +188,132 @@ def _apply_lightweight_migrations(connection) -> None:
     if "rolling_28d_window" not in vip_sync_run_columns:
         connection.execute(
             "ALTER TABLE vip_ae_sync_runs ADD COLUMN rolling_28d_window TEXT"
+        )
+    if "purchase_source_row_count" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs "
+            "ADD COLUMN purchase_source_row_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "purchase_vip_package_count" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs "
+            "ADD COLUMN purchase_vip_package_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "purchase_lifetime_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_lifetime_window TEXT"
+        )
+    if "purchase_7d_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_7d_window TEXT"
+        )
+    if "purchase_14d_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_14d_window TEXT"
+        )
+    if "purchase_recent_window" not in vip_sync_run_columns:
+        connection.execute(
+            "ALTER TABLE vip_ae_sync_runs ADD COLUMN purchase_recent_window TEXT"
+        )
+
+    vip_purchase_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(vip_purchase_packages)").fetchall()
+    }
+    for column_name, definition in (
+        ("payment_channel", "TEXT NOT NULL DEFAULT 'cash'"),
+        ("currency_name", "TEXT NOT NULL DEFAULT '美元'"),
+        ("source_event", "TEXT NOT NULL DEFAULT 'role_pay'"),
+        ("is_demand_evidence", "INTEGER NOT NULL DEFAULT 1"),
+    ):
+        if column_name not in vip_purchase_columns:
+            connection.execute(
+                f"ALTER TABLE vip_purchase_packages ADD COLUMN {column_name} {definition}"
+            )
+    connection.execute(
+        """
+        UPDATE vip_purchase_packages
+        SET category = '龙币充值', is_demand_evidence = 0
+        WHERE source_event = 'role_pay'
+          AND (
+              LOWER(COALESCE(giftbox_name, '')) LIKE '%dragon coin%'
+              OR items_json LIKE '%\"item_id\":\"20000064\"%'
+          )
+        """
+    )
+    verified_dragon_coin_tiers = {
+        "931701": "龙币 × 6",
+        "931702": "龙币 × 30",
+        "931703": "龙币 × 98",
+        "931704": "龙币 × 198",
+        "931705": "龙币 × 328",
+        "931706": "龙币 × 648",
+        "931707": "龙币 × 1296",
+        "931708": "龙币 × 1944",
+        "931709": "龙币 × 2592",
+        "931710": "龙币 × 2998",
+        "931711": "龙币 × 6480",
+        "931712": "龙币 × 12888",
+        "931713": "龙币 × 19440",
+        "931714": "龙币 × 25920",
+        "931715": "龙币 × 29980",
+    }
+    for giftbox_id, giftbox_name in verified_dragon_coin_tiers.items():
+        connection.execute(
+            """
+            UPDATE vip_purchase_packages
+            SET giftbox_name = CASE
+                    WHEN COALESCE(giftbox_name, '') IN ('', '未命名礼包')
+                      OR LOWER(COALESCE(giftbox_name, '')) LIKE '%dragon coin%'
+                      OR COALESCE(giftbox_name, '') LIKE '龙币%'
+                    THEN ?
+                    ELSE giftbox_name
+                END,
+                category = '龙币充值',
+                is_demand_evidence = 0
+            WHERE source_event = 'role_pay'
+              AND (giftbox_id = ? OR giftbox_id LIKE ?)
+            """,
+            (giftbox_name, giftbox_id, f"{giftbox_id}::%"),
+        )
+    verified_giftbox_names = {
+        "61": ("重工狂魔", "其他"),
+        "90012": ("城建礼包", "建筑发展"),
+        "90014": ("城建礼包", "建筑发展"),
+        "90015": ("城建礼包", "建筑发展"),
+        "2000002": ("装备升星礼包", "装备强化"),
+        "2000004": ("装备升星礼包", "装备强化"),
+        "2000005": ("装备升星礼包", "装备强化"),
+        "2000302": ("装备强化礼包", "装备强化"),
+        "2000304": ("装备强化礼包", "装备强化"),
+        "2000305": ("装备强化礼包", "装备强化"),
+        "251002": ("神兽魂石礼包", "神兽养成"),
+        "251004": ("神兽魂石礼包", "神兽养成"),
+        "251005": ("神兽魂石礼包", "神兽养成"),
+        "283001": ("机甲锻造豪礼", "巨兽机甲"),
+        "283003": ("机甲锻造豪礼", "巨兽机甲"),
+        "283005": ("机甲锻造豪礼", "巨兽机甲"),
+        "283301": ("养成自选豪礼", "其他"),
+        "283303": ("养成自选豪礼", "其他"),
+        "283305": ("养成自选豪礼", "其他"),
+        "940902": ("深渊巨龙", "其他"),
+        "941201": ("霜龙裂爪", "其他"),
+        "941202": ("灵蛇赐福", "其他"),
+        "941203": ("凤凰涅槃", "其他"),
+        "941204": ("流光溢彩", "其他"),
+        "941205": ("冰火之城", "其他"),
+        "941206": ("月驰星海", "其他"),
+    }
+    for giftbox_id, (giftbox_name, category) in verified_giftbox_names.items():
+        connection.execute(
+            """
+            UPDATE vip_purchase_packages
+            SET giftbox_name = ?, category = ?
+            WHERE source_event = 'role_pay'
+              AND (giftbox_id = ? OR giftbox_id LIKE ?)
+              AND COALESCE(giftbox_name, '') IN ('', '未命名礼包')
+            """,
+            (giftbox_name, category, giftbox_id, f"{giftbox_id}::%"),
         )
 
 

@@ -1,8 +1,9 @@
 {
-  "MISSING_SERVER_ID": "Your application is missing your server ID. Please include both your in-game character name and server ID, for example: S14 Bubble.",
-  "MISSING_PLAYER_NAME": "Your application is missing your in-game character name. Please include both your character name and server ID, for example: S14 Bubble.",
-  "INCOMPLETE_APPLICATION": "We couldn't identify complete character information in your application. Please provide your in-game character name and server ID, for example: S14 Bubble.",
-  "INVALID_SERVER_ID": "The server ID in your application could not be recognized. Please check your server ID and submit your application again. Example: S14 Bubble.",
-  "MULTIPLE_SERVER_IDS": "Multiple server IDs were found in your application. Please submit only your current server ID together with your in-game character name, for example: S14 Bubble.",
-  "AMBIGUOUS_APPLICATION": "We couldn't clearly identify your character and server information. Please resubmit your application using a clear format such as: S14 Bubble."
+  "MISSING_SERVER_ID": "Your application is missing your server ID. Please include both your in-game character name and server ID, for example: S51 Bubble.",
+  "MISSING_PLAYER_NAME": "Your application is missing your in-game character name. Please include both your character name and server ID, for example: S51 Bubble.",
+  "INCOMPLETE_APPLICATION": "We couldn't identify complete character information in your application. Please provide your in-game character name and server ID, for example: S51 Bubble.",
+  "INVALID_SERVER_ID": "The server ID in your application could not be recognized. Please check your server ID and submit your application again. Example: S51 Bubble.",
+  "MULTIPLE_SERVER_IDS": "Multiple server IDs were found in your application. Please submit only your current server ID together with your in-game character name, for example: S51 Bubble.",
+  "AMBIGUOUS_APPLICATION": "We couldn't clearly identify your character and server information. Please resubmit your application using a clear format such as: S51 Bubble.",
+  "SERVER_NOT_OPEN_YET": "The server in your application has not opened yet. Please submit your in-game character name and server ID again after the scheduled opening."
 }
